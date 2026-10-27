@@ -1,0 +1,33 @@
+{
+  "name": "chess0",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Chess0 — a from-scratch chess engine in TypeScript with a polished web UI",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview",
+    "test": "tsx scripts/test.ts",
+    "perft": "tsx scripts/perft.ts",
+    "perft:quick": "tsx scripts/perft.ts --quick",
+    "bench": "tsx scripts/bench.ts",
+    "uci": "tsx scripts/uci.ts"
+  },
+  "dependencies": {
+    "react": "^18.3.1",
+    "react-chessboard": "^4.7.3",
+    "react-dom": "^18.3.1"
+  },
+  "devDependencies": {
+    "@tailwindcss/vite": "^4.1.0",
+    "@types/node": "^22.10.0",
+    "@types/react": "^18.3.12",
+    "@types/react-dom": "^18.3.1",
+    "@vitejs/plugin-react": "^4.3.4",
+    "tailwindcss": "^4.1.0",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2",
+    "vite": "^6.0.0"
+  }
+}
