@@ -42,7 +42,7 @@ import {
 } from './multiplayer';
 import type { MultiplayerRoomSnapshot } from './multiplayer';
 import { EngineClient } from './engineClient';
-import type { EngineInfoEvent } from './engineClient';
+import type { EngineBestMove, EngineInfoEvent } from './engineClient';
 import { playSound } from './sound';
 
 export type Mode = 'hve' | 'pvp' | 'puzzle' | 'academy' | 'eve' | 'analysis';
@@ -238,6 +238,9 @@ export function useChessGame() {
   const [pvArrow, setPvArrow] = useState<[string, string] | null>(null);
   const [showMultiPvArrows, setShowMultiPvArrows] = useState(true);
   const [gameId, setGameId] = useState(0);
+  const [engineReview, setEngineReview] = useState<{ done: number; total: number } | null>(null);
+  const [reviewedGameId, setReviewedGameId] = useState<number | null>(null);
+  const reviewRunningRef = useRef(false);
 
   const [soundOn, setSoundOn] = useState(() => {
     try {
@@ -501,6 +504,8 @@ export function useChessGame() {
 
   const runPositionAnalysis = useCallback(
     (movetimeMs = 480, targetFen?: string) => {
+      // Post-game full review owns the worker while running; skip interleaved evals.
+      if (reviewRunningRef.current) return;
       const { client } = ensureInit();
       const token = tokenRef.current;
       if (targetFen !== undefined) {
@@ -1205,6 +1210,85 @@ export function useChessGame() {
     configRef.current = { ...configRef.current, autoFlip: on };
   }, []);
 
+  // --- Post-game full engine review ------------------------------------------
+  // One search per position (v3, MultiPV). Result j doubles as the "after" eval
+  // for move j-1 (mate-aware, replacing the static-eval fallback) and the
+  // "before" candidates for move j, so classifications and accuracy are
+  // computed from real searches — chess.com-style review.
+
+  const REVIEW_MOVETIME_MS = 400;
+
+  const runFullReview = useCallback(async () => {
+    if (reviewRunningRef.current || history.length === 0) return;
+    const { client } = ensureInit();
+    const token = tokenRef.current;
+    reviewRunningRef.current = true;
+    setEngineReview({ done: 0, total: history.length + 1 });
+
+    try {
+      const results: EngineBestMove[] = [];
+      const fens = history.map((h) => h.fenBefore);
+      fens.push(history[history.length - 1].fenAfter);
+
+      for (let j = 0; j < fens.length; j++) {
+        if (token !== tokenRef.current) return;
+        client.reset(fens[j]);
+        const res = await client.search(
+          { movetime: REVIEW_MOVETIME_MS, variant: 'v3', multiPv: 3, intent: 'eval' },
+          () => {},
+        );
+        if (token !== tokenRef.current) return;
+        results.push(res);
+        setEngineReview({ done: j + 1, total: fens.length });
+
+        if (j > 0) {
+          const idx = j - 1;
+          const entry = history[idx];
+          const pre = results[j - 1].multiPv ?? [];
+          const post = results[j];
+          // scoreMate encoding collapses to 0 for an already-mated position;
+          // normalize to "mated now" (±1) from White's POV.
+          const postMate =
+            post.scoreMate !== undefined
+              ? post.scoreMate === 0
+                ? post.stm === 0
+                  ? -1
+                  : 1
+                : post.stm === 0
+                  ? post.scoreMate
+                  : -post.scoreMate
+              : undefined;
+          const postCp =
+            postMate === undefined && post.scoreCp !== undefined
+              ? post.stm === 0
+                ? post.scoreCp
+                : -post.scoreCp
+              : undefined;
+          const eng = new Engine();
+          eng.reset(entry.fenBefore);
+          const move = eng.uciToMove(entry.uci);
+          if (move !== null) {
+            const analysis = analyzeMoveExecution(eng.pos, move, pre, postCp, postMate);
+            setHistory((h) => h.map((e, i) => (i === idx ? { ...e, analysis } : e)));
+          }
+        }
+      }
+      if (token === tokenRef.current) setReviewedGameId(gameId);
+    } finally {
+      reviewRunningRef.current = false;
+      setEngineReview(null);
+    }
+  }, [ensureInit, gameId, history]);
+
+  // Auto-review as soon as a match ends (any mode except puzzles/academy drills).
+  useEffect(() => {
+    if (gameEnd === null && customResultBanner === null) return;
+    if (history.length === 0) return;
+    if (mode === 'puzzle' || mode === 'academy') return;
+    if (reviewedGameId === gameId) return;
+    void runFullReview();
+  }, [customResultBanner, gameEnd, gameId, history.length, mode, reviewedGameId, runFullReview]);
+
   // --- History Scrubbing & Deep Analysis -----------------------------------
 
   const activePly =
@@ -1676,6 +1760,9 @@ export function useChessGame() {
     currentOpening,
     bookExplorerMoves,
     gameSummary,
+    engineReview,
+    reviewedGame: reviewedGameId === gameId,
+    runFullReview,
     // actions
     newGame,
     switchMode,

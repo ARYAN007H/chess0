@@ -745,6 +745,9 @@ export default function App() {
                     game.analyzeDisplayedPosition();
                     setActiveTab('arena');
                   }}
+                  reviewProgress={game.engineReview}
+                  reviewDone={game.reviewedGame}
+                  onRunReview={game.runFullReview}
                 />
               ))}
 

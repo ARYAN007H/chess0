@@ -9,6 +9,9 @@ interface AnalysisPanelProps {
   summary: GameSummaryStats;
   onSelectPly: (ply: number) => void;
   onAnalyzeDeeper: () => void;
+  reviewProgress: { done: number; total: number } | null;
+  reviewDone: boolean;
+  onRunReview: () => void;
 }
 
 const BREAKDOWN_ORDER: MoveClassification[] = [
@@ -35,6 +38,9 @@ export function AnalysisPanel({
   summary,
   onSelectPly,
   onAnalyzeDeeper,
+  reviewProgress,
+  reviewDone,
+  onRunReview,
 }: AnalysisPanelProps) {
   const width = 340;
   const height = 80;
@@ -67,6 +73,34 @@ export function AnalysisPanel({
 
   return (
     <div className="space-y-3">
+      {/* Full engine review: progress / trigger */}
+      {reviewProgress ? (
+        <div className="rounded-lg border border-sky-300 bg-sky-50 px-3 py-2 dark:border-sky-400/30 dark:bg-sky-400/10">
+          <div className="mb-1.5 flex items-center justify-between text-[11px] font-semibold text-sky-800 dark:text-sky-200">
+            <span>Engine reviewing game…</span>
+            <span className="font-mono tabular-nums">
+              {reviewProgress.done}/{reviewProgress.total}
+            </span>
+          </div>
+          <div className="h-1.5 overflow-hidden rounded-full bg-sky-200 dark:bg-sky-400/20">
+            <div
+              className="h-full rounded-full bg-sky-500 transition-all duration-200"
+              style={{ width: `${(reviewProgress.done / Math.max(1, reviewProgress.total)) * 100}%` }}
+            />
+          </div>
+        </div>
+      ) : (
+        !reviewDone &&
+        history.length > 0 && (
+          <button
+            onClick={onRunReview}
+            className="w-full rounded-lg border border-sky-300 bg-sky-50 px-3 py-2 text-xs font-bold text-sky-800 transition hover:bg-sky-100 dark:border-sky-400/30 dark:bg-sky-400/10 dark:text-sky-200 dark:hover:bg-sky-400/20"
+          >
+            Run full engine review (mate-aware classifications &amp; accuracy)
+          </button>
+        )
+      )}
+
       {/* Move Coach / Classification Card */}
       <div className="rounded-lg border border-stone-200 bg-stone-50 p-3 dark:border-white/10 dark:bg-[#1f1e1b]">
         {displayedMove && moveMeta ? (
