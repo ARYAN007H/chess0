@@ -19,7 +19,6 @@
 import { BISHOP, BLACK, KING, KNIGHT, PAWN, QUEEN, ROOK, WHITE } from './types';
 import type { Position } from './position';
 import { TOTAL_PHASE } from './psto';
-import { Z_PIECE_HI, Z_PIECE_LO } from './zobrist';
 
 export const TEMPO_V3 = 14;
 
@@ -35,16 +34,16 @@ const BACKWARD_MG = -12;
 const BACKWARD_EG = -10;
 
 // Connected & phalanx bonus by relative rank (0..7)
-const CONNECTED_MG = [0, 0, 5, 8, 14, 26, 48, 0];
-const CONNECTED_EG = [0, 0, 4, 7, 12, 24, 42, 0];
-const PHALANX_MG = [0, 0, 4, 7, 12, 22, 36, 0];
-const PHALANX_EG = [0, 0, 3, 6, 10, 20, 32, 0];
+const CONNECTED_MG = new Int16Array([0, 0, 5, 8, 14, 26, 48, 0]);
+const CONNECTED_EG = new Int16Array([0, 0, 4, 7, 12, 24, 42, 0]);
+const PHALANX_MG = new Int16Array([0, 0, 4, 7, 12, 22, 36, 0]);
+const PHALANX_EG = new Int16Array([0, 0, 3, 6, 10, 20, 32, 0]);
 
 // Passed pawns by relative rank (0..7)
-const PASSED_MG = [0, 4, 10, 20, 42, 78, 135, 0];
-const PASSED_EG = [0, 12, 24, 46, 82, 138, 215, 0];
-const PASSED_FREE_MG = [0, 2, 4, 8, 16, 30, 52, 0];
-const PASSED_FREE_EG = [0, 6, 12, 22, 40, 68, 105, 0];
+const PASSED_MG = new Int16Array([0, 4, 10, 20, 42, 78, 135, 0]);
+const PASSED_EG = new Int16Array([0, 12, 24, 46, 82, 138, 215, 0]);
+const PASSED_FREE_MG = new Int16Array([0, 2, 4, 8, 16, 30, 52, 0]);
+const PASSED_FREE_EG = new Int16Array([0, 6, 12, 22, 40, 68, 105, 0]);
 const PASSED_PROT_MG = 14;
 const PASSED_PROT_EG = 22;
 const ROOK_BEHIND_PASSER_MG = 16;
@@ -96,10 +95,10 @@ const SHIELD_NEAR = 14;
 const SHIELD_FAR = 7;
 const SHIELD_OPEN_FILE = -20;
 
-const KNIGHT_OFFSETS = [33, 31, 18, 14, -33, -31, -18, -14];
-const BISHOP_DIRS = [15, 17, -15, -17];
-const ROOK_DIRS = [16, 1, -16, -1];
-const QUEEN_DIRS = [15, 17, 16, 1, -15, -17, -16, -1];
+const BISHOP_DIRS = new Int32Array([15, 17, -15, -17]);
+const ROOK_DIRS = new Int32Array([16, 1, -16, -1]);
+const QUEEN_DIRS = new Int32Array([15, 17, 16, 1, -15, -17, -16, -1]);
+const KNIGHT_OFFSETS = new Int32Array([-33, -31, -18, -14, 14, 18, 31, 33]);
 
 // Center distance for mop-up eval (0..64 sq index -> distance from center)
 const CENTER_DIST = new Int32Array(64);
@@ -130,6 +129,52 @@ const pawnRankCount = [new Int32Array(8), new Int32Array(8)];
 const pawnSqs = [new Int32Array(10), new Int32Array(10)];
 const pieces = [new Int32Array(16), new Int32Array(16)]; // sq | (type << 8)
 
+// Flag-gated profiling counters (scripts/profile-eval.ts). The branches are
+// predictable-never while off, so the hot path is unaffected.
+export const evalV3Stats = { on: false, calls: 0, pawnTtHits: 0, evalCacheHits: 0 };
+
+// ---------------------------------------------------------------------------
+// Eval cache (16,384 entries) — memoizes the full White-POV score per
+// (board, castling, ep) state; the side to move is XORed out of the key since
+// the score is stm-independent. Generation-invalidated when params change.
+// ---------------------------------------------------------------------------
+
+const EVAL_CACHE_SIZE = 1 << 14;
+const EVAL_CACHE_MASK = EVAL_CACHE_SIZE - 1;
+const EVAL_CACHE_KEY = new Int32Array(EVAL_CACHE_SIZE); // hashLo ^ keySalt
+const EVAL_CACHE_HI = new Int32Array(EVAL_CACHE_SIZE); // hashHi ^ keySaltHi
+const EVAL_CACHE_SCORE = new Int32Array(EVAL_CACHE_SIZE);
+let evalCacheGen = -1;
+
+/** Bumps the cache generation (call after any eval-param change). */
+export function invalidateEvalCaches(): void {
+  evalCacheGen++;
+}
+
+// King-zone adjacency masks: for each 64-square king square, a 64-bit (lo/hi)
+// bitmask of squares within Chebyshev distance 1. Lets analyzePiece count
+// king-zone hits with two shifts instead of two Math.abs per visited square.
+const KING_ZONE_LO = new Int32Array(64);
+const KING_ZONE_HI = new Int32Array(64);
+for (let k = 0; k < 64; k++) {
+  const kr = k >> 3;
+  const kf = k & 7;
+  let lo = 0;
+  let hi = 0;
+  for (let dr = -1; dr <= 1; dr++) {
+    for (let df = -1; df <= 1; df++) {
+      const r = kr + dr;
+      const f = kf + df;
+      if (r < 0 || r > 7 || f < 0 || f > 7) continue;
+      const s64 = (r << 3) | f;
+      if (s64 < 32) lo |= 1 << s64;
+      else hi |= 1 << (s64 - 32);
+    }
+  }
+  KING_ZONE_LO[k] = lo;
+  KING_ZONE_HI[k] = hi;
+}
+
 /** Chebyshev distance between two 0x88 squares. */
 function kingDist(sq1: number, sq2: number): number {
   const dr = Math.abs((sq1 >> 4) - (sq2 >> 4));
@@ -150,7 +195,8 @@ function isBitSet(lo: number, hi: number, sq0x88: number): boolean {
 
 /**
  * Computes safe mobility and king-zone attack units for a piece at `sq`.
- * Returns packed `safeMob | (kingHits << 8)`.
+ * Returns packed `safeMob | (kingHits << 8) | (threatBonus << 16)`.
+ * `kzLo`/`kzHi` are the enemy king's zone adjacency mask (64-bit lo/hi pair).
  */
 function analyzePiece(
   board: Int8Array,
@@ -159,10 +205,9 @@ function analyzePiece(
   us: 0 | 1,
   enemyAtkLo: number,
   enemyAtkHi: number,
-  enemyKingSq: number,
+  kzLo: number,
+  kzHi: number,
 ): number {
-  const er = enemyKingSq >> 4;
-  const ef = enemyKingSq & 7;
   let safeMob = 0;
   let kingHits = 0;
   let threatBonus = 0;
@@ -172,22 +217,17 @@ function analyzePiece(
       const to = sq + KNIGHT_OFFSETS[i];
       if (to & 0x88) continue;
       const t = board[to];
+      const s64 = ((to >> 4) << 3) | (to & 7);
+      if (s64 < 32 ? (kzLo >>> s64) & 1 : (kzHi >>> (s64 - 32)) & 1) kingHits++;
       if (t === 0) {
-        const s64 = ((to >> 4) << 3) | (to & 7);
         const atk = s64 < 32 ? (enemyAtkLo >>> s64) & 1 : (enemyAtkHi >>> (s64 - 32)) & 1;
         if (atk === 0) safeMob++;
       } else if (us === WHITE ? t < 0 : t > 0) {
-        const s64 = ((to >> 4) << 3) | (to & 7);
         const atk = s64 < 32 ? (enemyAtkLo >>> s64) & 1 : (enemyAtkHi >>> (s64 - 32)) & 1;
         if (atk === 0) safeMob++;
         const victim = t < 0 ? -t : t;
         if (victim === ROOK) threatBonus += 1;
         else if (victim === QUEEN) threatBonus += 2;
-      }
-      const tr = to >> 4;
-      const tf = to & 7;
-      if (Math.abs(tr - er) <= 1 && Math.abs(tf - ef) <= 1) {
-        kingHits++;
       }
     }
     return safeMob | (kingHits << 8) | (threatBonus << 16);
@@ -199,18 +239,13 @@ function analyzePiece(
     let to = sq + d;
     while (!(to & 0x88)) {
       const t = board[to];
-      const tr = to >> 4;
-      const tf = to & 7;
-      if (Math.abs(tr - er) <= 1 && Math.abs(tf - ef) <= 1) {
-        kingHits++;
-      }
+      const s64 = ((to >> 4) << 3) | (to & 7);
+      if (s64 < 32 ? (kzLo >>> s64) & 1 : (kzHi >>> (s64 - 32)) & 1) kingHits++;
       if (t === 0) {
-        const s64 = (tr << 3) | tf;
         const atk = s64 < 32 ? (enemyAtkLo >>> s64) & 1 : (enemyAtkHi >>> (s64 - 32)) & 1;
         if (atk === 0) safeMob++;
       } else {
         if (us === WHITE ? t < 0 : t > 0) {
-          const s64 = (tr << 3) | tf;
           const atk = s64 < 32 ? (enemyAtkLo >>> s64) & 1 : (enemyAtkHi >>> (s64 - 32)) & 1;
           if (atk === 0) safeMob++;
           if (type === BISHOP) {
@@ -229,6 +264,19 @@ function analyzePiece(
 
 /** White-relative evaluation in centipawns (without tempo). */
 export function evalV3WhitePov(pos: Position): number {
+  // Eval cache: keyed on the FULL position hash. The score is mostly
+  // stm-independent, but the unstoppable-passer (rule-of-the-square) term
+  // reads pos.stm, so the side to move MUST stay part of the key.
+  if (evalV3Stats.on) evalV3Stats.calls++;
+  const genSalt = (evalCacheGen * 0x61c88637) | 0;
+  const keyLo = pos.hashLo;
+  const keyHi = pos.hashHi;
+  const eIdx = keyLo & EVAL_CACHE_MASK;
+  if (EVAL_CACHE_KEY[eIdx] === (keyLo ^ genSalt) && EVAL_CACHE_HI[eIdx] === (keyHi ^ genSalt)) {
+    if (evalV3Stats.on) evalV3Stats.evalCacheHits++;
+    return EVAL_CACHE_SCORE[eIdx];
+  }
+
   const board = pos.board;
 
   for (let c = 0; c < 2; c++) {
@@ -251,8 +299,6 @@ export function evalV3WhitePov(pos: Position): number {
   let wAtkHi = 0;
   let bAtkLo = 0;
   let bAtkHi = 0;
-  let pawnHashLo = 0;
-  let pawnHashHi = 0;
 
   for (let r = 0; r < 8; r++) {
     const rShift = r << 4;
@@ -267,8 +313,6 @@ export function evalV3WhitePov(pos: Position): number {
           if (r > pawnMaxRank[WHITE][f]) pawnMaxRank[WHITE][f] = r;
           if (r < pawnMinRank[WHITE][f]) pawnMinRank[WHITE][f] = r;
           pawnSqs[WHITE][pawnNWhite++] = sq;
-          pawnHashLo ^= Z_PIECE_LO[sq]; // pieceIndex(PAWN) === 0
-          pawnHashHi ^= Z_PIECE_HI[sq];
           const a1 = sq + 15;
           if (!(a1 & 0x88)) {
             const s64 = ((a1 >> 4) << 3) | (a1 & 7);
@@ -296,8 +340,6 @@ export function evalV3WhitePov(pos: Position): number {
           if (r > pawnMaxRank[BLACK][f]) pawnMaxRank[BLACK][f] = r;
           if (r < pawnMinRank[BLACK][f]) pawnMinRank[BLACK][f] = r;
           pawnSqs[BLACK][pawnNBlack++] = sq;
-          pawnHashLo ^= Z_PIECE_LO[6 * 128 + sq]; // pieceIndex(-PAWN) === 6
-          pawnHashHi ^= Z_PIECE_HI[6 * 128 + sq];
           const a1 = sq - 15;
           if (!(a1 & 0x88)) {
             const s64 = ((a1 >> 4) << 3) | (a1 & 7);
@@ -325,8 +367,9 @@ export function evalV3WhitePov(pos: Position): number {
   let eg = pos.eg;
 
   // Probe Pawn TT for pure pawn-structure static terms (doubled, isolated, backward, connected, phalanx, base passed)
-  const pIdx = pawnHashLo & PAWN_TT_MASK;
-  if (PAWN_TT_VALID[pIdx] === 1 && PAWN_TT_HI[pIdx] === pawnHashHi) {
+  const pIdx = pos.pawnHashLo & PAWN_TT_MASK;
+  if (PAWN_TT_VALID[pIdx] === 1 && PAWN_TT_HI[pIdx] === pos.pawnHashHi) {
+    if (evalV3Stats.on) evalV3Stats.pawnTtHits++;
     mg += PAWN_TT_MG[pIdx];
     eg += PAWN_TT_EG[pIdx];
   } else {
@@ -412,7 +455,7 @@ export function evalV3WhitePov(pos: Position): number {
     }
 
     PAWN_TT_VALID[pIdx] = 1;
-    PAWN_TT_HI[pIdx] = pawnHashHi;
+    PAWN_TT_HI[pIdx] = pos.pawnHashHi;
     PAWN_TT_MG[pIdx] = pmg;
     PAWN_TT_EG[pIdx] = peg;
     mg += pmg;
@@ -433,6 +476,9 @@ export function evalV3WhitePov(pos: Position): number {
     const enemyAtkHi = color === WHITE ? bAtkHi : wAtkHi;
     const ourKingSq = pos.kingSq[color];
     const enemyKingSq = pos.kingSq[them];
+    const ek64 = ((enemyKingSq >> 4) << 3) | (enemyKingSq & 7);
+    const kzLo = KING_ZONE_LO[ek64];
+    const kzHi = KING_ZONE_HI[ek64];
 
     let tmg = 0;
     let teg = 0;
@@ -602,7 +648,7 @@ export function evalV3WhitePov(pos: Position): number {
 
       if (type === QUEEN) hasQueen = true;
 
-      const analysis = analyzePiece(board, sq, type, color, enemyAtkLo, enemyAtkHi, enemyKingSq);
+      const analysis = analyzePiece(board, sq, type, color, enemyAtkLo, enemyAtkHi, kzLo, kzHi);
       const mob = analysis & 0xff;
       const kingHits = (analysis >> 8) & 0xff;
       const threats = analysis >> 16;
@@ -713,6 +759,9 @@ export function evalV3WhitePov(pos: Position): number {
     }
   }
 
+  EVAL_CACHE_KEY[eIdx] = keyLo ^ genSalt;
+  EVAL_CACHE_HI[eIdx] = keyHi ^ genSalt;
+  EVAL_CACHE_SCORE[eIdx] = score;
   return score;
 }
 

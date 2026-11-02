@@ -43,6 +43,9 @@ export class Position {
   kingSq = new Int32Array(2);
   hashLo = 0;
   hashHi = 0;
+  /** Zobrist of pawn placements only (both colors) — keys the eval pawn TT. */
+  pawnHashLo = 0;
+  pawnHashHi = 0;
 
   // White-relative incremental tapered-eval accumulators.
   mg = 0;
@@ -61,6 +64,8 @@ export class Position {
   histHalfmove = new Int32Array(MAX_HIST);
   histHashLo = new Int32Array(MAX_HIST);
   histHashHi = new Int32Array(MAX_HIST);
+  histPawnHashLo = new Int32Array(MAX_HIST);
+  histPawnHashHi = new Int32Array(MAX_HIST);
   histMg = new Int32Array(MAX_HIST);
   histEg = new Int32Array(MAX_HIST);
   histPhase = new Int32Array(MAX_HIST);
@@ -80,6 +85,8 @@ export class Position {
     p.kingSq.set(this.kingSq);
     p.hashLo = this.hashLo;
     p.hashHi = this.hashHi;
+    p.pawnHashLo = this.pawnHashLo;
+    p.pawnHashHi = this.pawnHashHi;
     p.mg = this.mg;
     p.eg = this.eg;
     p.phase = this.phase;
@@ -94,6 +101,8 @@ export class Position {
     p.histHalfmove.set(this.histHalfmove);
     p.histHashLo.set(this.histHashLo);
     p.histHashHi.set(this.histHashHi);
+    p.histPawnHashLo.set(this.histPawnHashLo);
+    p.histPawnHashHi.set(this.histPawnHashHi);
     p.histMg.set(this.histMg);
     p.histEg.set(this.histEg);
     p.histPhase.set(this.histPhase);
@@ -130,6 +139,8 @@ function addPieceEval(pos: Position, piece: number, sq: number): void {
   const color = piece > 0 ? WHITE : BLACK;
   if (type === PAWN) {
     pos.pawnCount[color]++;
+    pos.pawnHashLo ^= Z_PIECE_LO[pi * 128 + sq];
+    pos.pawnHashHi ^= Z_PIECE_HI[pi * 128 + sq];
   } else if (type === QUEEN || type === ROOK) {
     pos.rqCount[color]++;
     pos.npmCount[color]++;
@@ -149,6 +160,8 @@ function removePieceEval(pos: Position, piece: number, sq: number): void {
   const color = piece > 0 ? WHITE : BLACK;
   if (type === PAWN) {
     pos.pawnCount[color]--;
+    pos.pawnHashLo ^= Z_PIECE_LO[pi * 128 + sq];
+    pos.pawnHashHi ^= Z_PIECE_HI[pi * 128 + sq];
   } else if (type === QUEEN || type === ROOK) {
     pos.rqCount[color]--;
     pos.npmCount[color]--;
@@ -166,6 +179,8 @@ export function computeDerived(pos: Position): void {
   pos.mg = 0;
   pos.eg = 0;
   pos.phase = 0;
+  pos.pawnHashLo = 0;
+  pos.pawnHashHi = 0;
   pos.pawnCount.fill(0);
   pos.minorCount.fill(0);
   pos.rqCount.fill(0);
@@ -219,6 +234,8 @@ export function makeMove(pos: Position, move: number): void {
   pos.histHalfmove[h] = pos.halfmove;
   pos.histHashLo[h] = pos.hashLo;
   pos.histHashHi[h] = pos.hashHi;
+  pos.histPawnHashLo[h] = pos.pawnHashLo;
+  pos.histPawnHashHi[h] = pos.pawnHashHi;
   pos.histMg[h] = pos.mg;
   pos.histEg[h] = pos.eg;
   pos.histPhase[h] = pos.phase;
@@ -326,6 +343,8 @@ export function unmakeMove(pos: Position, move: number): void {
   pos.halfmove = pos.histHalfmove[h];
   pos.hashLo = pos.histHashLo[h];
   pos.hashHi = pos.histHashHi[h];
+  pos.pawnHashLo = pos.histPawnHashLo[h];
+  pos.pawnHashHi = pos.histPawnHashHi[h];
   pos.mg = pos.histMg[h];
   pos.eg = pos.histEg[h];
   pos.phase = pos.histPhase[h];
@@ -366,6 +385,8 @@ export function makeNullMove(pos: Position): void {
   pos.histHalfmove[h] = pos.halfmove;
   pos.histHashLo[h] = pos.hashLo;
   pos.histHashHi[h] = pos.hashHi;
+  pos.histPawnHashLo[h] = pos.pawnHashLo;
+  pos.histPawnHashHi[h] = pos.pawnHashHi;
   pos.histMg[h] = pos.mg;
   pos.histEg[h] = pos.eg;
   pos.histPhase[h] = pos.phase;
@@ -397,6 +418,8 @@ export function unmakeNullMove(pos: Position): void {
   pos.halfmove = pos.histHalfmove[h];
   pos.hashLo = pos.histHashLo[h];
   pos.hashHi = pos.histHashHi[h];
+  pos.pawnHashLo = pos.histPawnHashLo[h];
+  pos.pawnHashHi = pos.histPawnHashHi[h];
   // Eval accumulators and piece counts are untouched by a null move.
 }
 
