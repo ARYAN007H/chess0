@@ -41,8 +41,8 @@ import {
   getOrCreatePlayerId,
 } from './multiplayer';
 import type { MultiplayerRoomSnapshot } from './multiplayer';
-import { EngineClient } from './engineClient';
 import type { EngineBestMove, EngineInfoEvent } from './engineClient';
+import { EnginePoolClient, defaultThreadCount } from './enginePool';
 import { playSound } from './sound';
 
 export type Mode = 'hve' | 'pvp' | 'puzzle' | 'academy' | 'eve' | 'analysis';
@@ -139,7 +139,7 @@ const colorOf = (side: Side): 0 | 1 => (side === 'white' ? 0 : 1);
 
 export function useChessGame() {
   const engineRef = useRef<Engine | null>(null);
-  const clientRef = useRef<EngineClient | null>(null);
+  const clientRef = useRef<EnginePoolClient | null>(null);
   const tokenRef = useRef(0);
   const preCandidatesRef = useRef<MultiPvLine[]>([]);
   const mpSessionRef = useRef<MultiplayerSession | null>(null);
@@ -310,9 +310,35 @@ export function useChessGame() {
     } catch {}
   }, [playerName]);
 
+  // Search threads (worker fan-out). Changing it rebuilds the worker pool.
+  const searchThreadsRef = useRef(defaultThreadCount());
+  const [searchThreads, setSearchThreadsState] = useState(() => {
+    try {
+      const v = Number(localStorage.getItem('chess0-threads'));
+      if (Number.isFinite(v) && v >= 1 && v <= 8) return v;
+    } catch {}
+    return defaultThreadCount();
+  });
+  useEffect(() => {
+    try {
+      localStorage.setItem('chess0-threads', String(searchThreads));
+    } catch {}
+  }, [searchThreads]);
+
+  const setSearchThreads = useCallback((n: number) => {
+    const v = Math.max(1, Math.min(8, n | 0));
+    searchThreadsRef.current = v;
+    setSearchThreadsState(v);
+    if (clientRef.current) {
+      clientRef.current.terminate();
+      clientRef.current = new EnginePoolClient(v);
+      if (engineRef.current) clientRef.current.reset(engineRef.current.fen());
+    }
+  }, []);
+
   const ensureInit = useCallback(() => {
     if (engineRef.current === null) engineRef.current = new Engine();
-    if (clientRef.current === null) clientRef.current = new EngineClient();
+    if (clientRef.current === null) clientRef.current = new EnginePoolClient(searchThreadsRef.current);
     return { engine: engineRef.current, client: clientRef.current };
   }, []);
 
@@ -1763,6 +1789,8 @@ export function useChessGame() {
     engineReview,
     reviewedGame: reviewedGameId === gameId,
     runFullReview,
+    searchThreads,
+    setSearchThreads,
     // actions
     newGame,
     switchMode,

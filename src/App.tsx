@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useChessGame } from './useChessGame';
 import type { Level, Side } from './useChessGame';
+import { defaultThreadCount } from './enginePool';
 import { BoardPanel } from './components/BoardPanel';
 import { EvalBar } from './components/EvalBar';
 import { PlayerCard, materialStatus } from './components/PlayerCard';
@@ -557,6 +558,24 @@ export default function App() {
               className="rounded-md bg-[#2c2b28] px-2 py-1.5 text-[11px] font-bold text-[#c4c2bd] transition hover:bg-[#383632] hover:text-white"
             >
               {game.theme === 'dark' ? 'Light UI' : 'Dark UI'}
+            </button>
+            <button
+              type="button"
+              onClick={() => game.setSearchThreads(game.searchThreads >= 4 ? 1 : game.searchThreads + 1)}
+              title="Engine worker threads (multi-core search fan-out)"
+              className="rounded-md bg-[#2c2b28] px-2 py-1.5 text-[11px] font-bold text-[#c4c2bd] transition hover:bg-[#383632] hover:text-white"
+            >
+              Threads ×{game.searchThreads}
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                game.setSearchThreads(defaultThreadCount());
+              }}
+              title="Reset search threads to the recommended count for this machine"
+              className="rounded-md bg-[#2c2b28] px-2 py-1.5 text-[11px] font-bold text-[#c4c2bd] transition hover:bg-[#383632] hover:text-white"
+            >
+              Auto
             </button>
           </div>
         </div>
