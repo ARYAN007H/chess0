@@ -353,11 +353,25 @@ function search(pos: Position, depth: number, alpha: number, beta: number, ply: 
 // Root driver
 // ---------------------------------------------------------------------------
 
+export interface MultiPvLine {
+  rank: number;
+  move: number;
+  uci: string;
+  san: string;
+  scoreCp?: number;
+  scoreMate?: number;
+  pvUci: string[];
+  pvSan: string[];
+  selected?: boolean;
+}
+
 export interface SearchLimits {
   depth?: number;
   movetime?: number;
-  /** 'v2' selects the stronger v2 search/eval stack; default is 'v1'. */
-  variant?: 'v1' | 'v2';
+  /** 'v2' or 'v3' selects the stronger search/eval stack; default is 'v1'. */
+  variant?: 'v1' | 'v2' | 'v3';
+  /** Number of principal variation lines to compute and compare (default 3 in v3). */
+  multiPv?: number;
 }
 
 export interface SearchInfo {
@@ -372,6 +386,8 @@ export interface SearchInfo {
   stm: 0 | 1;
   pvUci: string[];
   pvSan: string[];
+  bookOpening?: string;
+  multiPv?: MultiPvLine[];
 }
 
 export interface SearchResult extends SearchInfo {

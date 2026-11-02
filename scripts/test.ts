@@ -356,6 +356,113 @@ console.log('v2 engine:');
 }
 
 // ---------------------------------------------------------------------------
+// v3 engine: evalV3 invariants, hybrid book + novelty, searchV3 tactics
+// ---------------------------------------------------------------------------
+
+console.log('v3 engine:');
+{
+  const { evalV3WhitePov, evalV3 } = await import('../src/engine/evalV3');
+  const { probeBookV3 } = await import('../src/engine/bookV3');
+  const { searchPositionV3 } = await import('../src/engine/searchV3');
+
+  const load = (fen: string) => {
+    const p = newStartPosition();
+    parseFen(p, fen);
+    return p;
+  };
+
+  // evalV3: mirror symmetry on all walk positions
+  for (const fen of WALK_FENS) {
+    const a = load(fen);
+    const b = load(mirroredFen(fen));
+    check(
+      evalV3WhitePov(a) === -evalV3WhitePov(b),
+      `v3 mirror symmetry ${fen}: ${evalV3WhitePov(a)} vs ${-evalV3WhitePov(b)}`,
+    );
+  }
+
+  // evalV3: startpos near 0, side-to-move relative
+  const spW = load('rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1');
+  const spB = load('rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR b KQkq - 0 1');
+  check(Math.abs(evalV3WhitePov(spW)) < 60, 'v3 startpos eval near 0');
+  check(evalV3(spW) === evalV3(spB), 'v3 eval is side-to-move relative');
+
+  // evalV3: outpost knight on d5 supported by e4 pawn outscores passive knight
+  const outpostPos = load('r2qk2r/ppp2ppp/2np1n2/3Np3/4P3/8/PPPP1PPP/R1BQKBNR w KQkq - 0 1');
+  const passivePos = load('r2qk2r/ppp2ppp/2np1n2/4p3/4P3/2N5/PPPP1PPP/R1BQKBNR w KQkq - 0 1');
+  check(
+    evalV3WhitePov(outpostPos) > evalV3WhitePov(passivePos),
+    `v3 outpost knight on d5 outscores c3 (${evalV3WhitePov(outpostPos)} > ${evalV3WhitePov(passivePos)})`,
+  );
+
+  // bookV3: returns Grandmaster candidates from startpos
+  const bookMoves = probeBookV3(spW);
+  check(bookMoves.length >= 3, `v3 book has startpos candidates (got ${bookMoves.length})`);
+
+  // searchV3: finds Qxf7# mate in 1
+  const m1 = load('r1bqkbnr/pppp1ppp/2n5/4p3/2B1P3/5Q2/PPPP1PPP/RNB1K1NR w KQkq - 0 1');
+  const r1 = searchPositionV3(m1, { depth: 4 });
+  check(moveToUci(r1.bestMove) === 'f3f7' && r1.scoreMate === 1, `v3 finds Qxf7# (got ${moveToUci(r1.bestMove)}, mate=${r1.scoreMate})`);
+
+  // searchV3: finds ladder mate in 2
+  const m2 = load('7k/8/8/8/8/8/1R6/R6K w - - 0 1');
+  const r2 = searchPositionV3(m2, { depth: 6 });
+  check(r2.scoreMate === 2, `v3 ladder mate in 2 (got mate=${r2.scoreMate} move ${moveToUci(r2.bestMove)})`);
+
+  // searchV3: 3-line Multi-PV returns 3 distinct candidate lines and picks the highest-scored #1 line
+  const tactic = load('r1bqk2r/pppp1ppp/2n2n2/4p3/1bB1P3/2NP1N2/PPP2PPP/R1BQK2R w KQkq - 0 1');
+  const rt = searchPositionV3(tactic, { depth: 5, multiPv: 3 });
+  const legalT = legalMoves(tactic);
+  check([...legalT].some((m) => m === rt.bestMove), 'v3 returns a legal move in tactical position');
+  check((rt.multiPv?.length ?? 0) === 3, `v3 Multi-PV returns 3 distinct lines (got ${rt.multiPv?.length})`);
+  if (rt.multiPv && rt.multiPv.length === 3) {
+    const ucis = new Set(rt.multiPv.map((l) => l.uci));
+    check(ucis.size === 3, 'v3 Multi-PV 3 lines have 3 distinct root moves');
+    check(rt.multiPv[0].uci === moveToUci(rt.bestMove), 'v3 picks Rank #1 best move out of the 3 Multi-PV lines');
+  }
+
+  // Move analysis & Opening detector sanity
+  const { analyzeMoveExecution } = await import('../src/engine/analysis');
+  const { detectOpening } = await import('../src/engine/bookV3');
+  const e2e4 = [...legalMoves(spW)].find((m) => moveToUci(m) === 'e2e4')!;
+  const bookAnalysis = analyzeMoveExecution(spW, e2e4);
+  check(bookAnalysis.classification === 'book', `1. e4 classified as book move (got ${bookAnalysis.classification})`);
+  const detected = detectOpening(spW, ['e2e4', 'c7c5']);
+  check(detected !== null && detected.eco === 'B20', `detects Sicilian Defense B20 (got ${detected?.eco})`);
+
+  // Verify every puzzle in PUZZLE_LIBRARY has a valid FEN and 100% legal solution moves
+  const { PUZZLE_LIBRARY } = await import('../src/engine/puzzles');
+  const { Engine } = await import('../src/engine/engine');
+  for (const puz of PUZZLE_LIBRARY) {
+    const eng = new Engine();
+    eng.reset(puz.initialFen);
+    if (puz.setupMoveUci) {
+      const sm = eng.uciToMove(puz.setupMoveUci);
+      check(sm !== null, `puzzle ${puz.id} setupMoveUci ${puz.setupMoveUci} is legal`);
+      if (sm !== null) eng.applyMove(sm);
+    }
+    for (const solUci of puz.solutionUci) {
+      const m = eng.uciToMove(solUci);
+      check(m !== null, `puzzle ${puz.id} solution move ${solUci} is legal`);
+      if (m !== null) eng.applyMove(m);
+    }
+  }
+
+  // Verify every Academy lesson step has valid FEN and legal correctUci moves
+  const { ACADEMY_MODULES } = await import('../src/engine/lessons');
+  for (const mod of ACADEMY_MODULES) {
+    for (const step of mod.steps) {
+      for (const uci of step.correctUci) {
+        const eng = new Engine();
+        eng.reset(step.fen);
+        const m = eng.uciToMove(uci);
+        check(m !== null, `academy ${mod.id} (${step.title}) move ${uci} is legal`);
+      }
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Eval speed gate (< 100ns per call)
 // ---------------------------------------------------------------------------
 

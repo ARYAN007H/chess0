@@ -10,6 +10,7 @@ import { moveToSan } from './san';
 import { searchPosition } from './search';
 import type { SearchInfo, SearchLimits, SearchResult } from './search';
 import { searchPositionV2 } from './searchV2';
+import { searchPositionV3 } from './searchV3';
 import { insufficientMaterial } from './eval';
 
 export type GameEnd =
@@ -129,6 +130,7 @@ export class Engine {
   }
 
   search(limits: SearchLimits, onInfo?: (info: SearchInfo) => void): SearchResult {
+    if (limits.variant === 'v3') return searchPositionV3(this.pos, limits, onInfo);
     if (limits.variant === 'v2') return searchPositionV2(this.pos, limits, onInfo);
     return searchPosition(this.pos, limits, onInfo);
   }

@@ -18,7 +18,8 @@ export interface WorkerRequest {
   plies?: number;
   depth?: number;
   movetime?: number;
-  variant?: 'v1' | 'v2';
+  variant?: 'v1' | 'v2' | 'v3';
+  multiPv?: number;
   intent?: 'move' | 'eval';
 }
 
@@ -50,6 +51,7 @@ ctx.onmessage = (e: MessageEvent<WorkerRequest>) => {
         if (msg.depth !== undefined) limits.depth = msg.depth;
         if (msg.movetime !== undefined) limits.movetime = msg.movetime;
         if (msg.variant !== undefined) limits.variant = msg.variant;
+        if (msg.multiPv !== undefined) limits.multiPv = msg.multiPv;
         const result = engine.search(limits, (info) => {
           ctx.postMessage({ type: 'info', id: msg.id, intent: msg.intent, ...info });
         });
@@ -59,6 +61,7 @@ ctx.onmessage = (e: MessageEvent<WorkerRequest>) => {
           intent: msg.intent,
           uci: result.bestMoveUci,
           depth: result.depth,
+          seldepth: result.seldepth,
           nodes: result.nodes,
           nps: result.nps,
           timeMs: result.timeMs,
@@ -67,6 +70,8 @@ ctx.onmessage = (e: MessageEvent<WorkerRequest>) => {
           scoreMate: result.scoreMate,
           pvSan: result.pvSan,
           pvUci: result.pvUci,
+          bookOpening: result.bookOpening,
+          multiPv: result.multiPv,
         });
         break;
       }

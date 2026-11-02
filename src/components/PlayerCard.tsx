@@ -11,52 +11,78 @@ interface PlayerCardProps {
   subtitle?: string;
   isTurn: boolean;
   thinking: boolean;
-  /** Pieces this side has captured (glyphs of the opponent). */
   captured: number[];
-  materialDiff: number; // positive = this side is ahead
-  dark: boolean;
+  materialDiff: number;
+  accuracy?: number | null;
 }
 
-export function PlayerCard({ side, name, subtitle, isTurn, thinking, captured, materialDiff, dark }: PlayerCardProps) {
+export function PlayerCard({
+  side,
+  name,
+  subtitle,
+  isTurn,
+  thinking,
+  captured,
+  materialDiff,
+  accuracy,
+}: PlayerCardProps) {
   return (
     <div
-      className={`flex items-center justify-between gap-3 rounded-xl border px-3 py-2 transition-colors ${
+      className={`flex items-center justify-between gap-3 rounded-xl border px-3.5 py-2 transition-colors ${
         isTurn
-          ? 'border-sky-400/70 bg-sky-50 dark:border-sky-500/50 dark:bg-sky-950/40'
-          : 'border-slate-200 bg-white/70 dark:border-slate-700/60 dark:bg-slate-900/50'
+          ? 'border-emerald-500/60 bg-white shadow-sm dark:border-emerald-500/45 dark:bg-slate-900/90'
+          : 'border-stone-200/90 bg-white/75 dark:border-slate-800 dark:bg-slate-900/45'
       }`}
     >
-      <div className="flex min-w-0 items-center gap-2.5">
+      <div className="flex min-w-0 items-center gap-3">
         <span
-          className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-lg ${
+          className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-lg ring-1 ${
             side === 'white'
-              ? 'bg-slate-100 text-slate-800 shadow-inner dark:bg-slate-200'
-              : 'bg-slate-800 text-slate-100 shadow-inner dark:bg-slate-950 dark:ring-1 dark:ring-slate-600'
+              ? 'bg-[#f4f1ea] text-slate-900 ring-stone-300 dark:bg-slate-100 dark:ring-slate-300'
+              : 'bg-slate-900 text-slate-100 ring-slate-700 dark:bg-slate-950 dark:ring-slate-700'
           }`}
         >
           {side === 'white' ? '♔' : '♚'}
         </span>
         <div className="min-w-0">
-          <div className="flex items-center gap-1.5 truncate text-sm font-semibold">
-            {name}
+          <div className="flex items-center gap-2 truncate text-sm font-bold tracking-tight text-slate-900 dark:text-slate-100">
+            <span className="truncate">{name}</span>
             {thinking && (
-              <span className="animate-thinking text-xs font-bold text-sky-500" title="engine is thinking">
-                ●●●
+              <span
+                className="animate-thinking font-mono text-[11px] font-medium text-emerald-600 dark:text-emerald-400"
+                title="Engine is computing 3-line Multi-PV"
+              >
+                calculating…
               </span>
             )}
           </div>
-          {subtitle !== undefined && subtitle !== '' && (
-            <div className="truncate text-[11px] text-slate-500 dark:text-slate-400">{subtitle}</div>
-          )}
+          <div className="flex items-center gap-1.5 truncate text-[11px] text-slate-500 dark:text-slate-400">
+            {subtitle && <span>{subtitle}</span>}
+            {accuracy !== undefined && accuracy !== null && (
+              <>
+                <span aria-hidden>·</span>
+                <span className="font-mono font-semibold tabular-nums text-slate-700 dark:text-slate-300">
+                  {accuracy.toFixed(1)}% acc
+                </span>
+              </>
+            )}
+          </div>
         </div>
       </div>
-      <div className="flex items-center gap-1.5">
-        {materialDiff > 0 && <span className="text-xs font-semibold tabular-nums text-slate-500 dark:text-slate-400">+{materialDiff}</span>}
-        <span className={`text-lg leading-none ${dark ? 'text-slate-900' : 'text-slate-700 dark:text-slate-200'}`}>
-          {captured.map((t, i) => (
-            <span key={i}>{GLYPHS[t]}</span>
-          ))}
-        </span>
+
+      <div className="flex shrink-0 items-center gap-2">
+        {captured.length > 0 && (
+          <span className="flex items-center text-base leading-none tracking-tighter text-slate-600 dark:text-slate-300">
+            {captured.map((t, i) => (
+              <span key={i}>{GLYPHS[t]}</span>
+            ))}
+          </span>
+        )}
+        {materialDiff > 0 && (
+          <span className="font-mono text-xs font-bold tabular-nums text-emerald-600 dark:text-emerald-400">
+            +{materialDiff}
+          </span>
+        )}
       </div>
     </div>
   );
@@ -78,7 +104,6 @@ export function materialStatus(counts: PieceCounts): {
     for (let i = 0; i < missingWhite; i++) blackCaptured.push(t);
     whiteDiff += (missingBlack - missingWhite) * VALUES[t];
   }
-  // Sort captures by value for a tidy display.
   const byValue = (a: number, b: number) => VALUES[a] - VALUES[b];
   whiteCaptured.sort(byValue);
   blackCaptured.sort(byValue);

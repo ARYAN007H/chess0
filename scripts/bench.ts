@@ -10,8 +10,8 @@ import { newStartPosition, parseFen } from '../src/engine/position';
 import type { Position } from '../src/engine/position';
 import { searchPosition } from '../src/engine/search';
 import { searchPositionV2 } from '../src/engine/searchV2';
-import type { SearchInfo } from '../src/engine/search';
-import { moveToUci } from '../src/engine/types';
+import { searchPositionV3 } from '../src/engine/searchV3';
+import type { SearchInfo, SearchResult } from '../src/engine/search';
 
 const BENCH_POSITIONS = [
   { name: 'startpos', fen: 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1' },
@@ -34,18 +34,14 @@ function runNamed(
   name: string,
   fen: string,
   movetime: number,
-  run: (pos: Position, movetime: number, onInfo: (info: SearchInfo) => void) => void,
+  run: (pos: Position, movetime: number, onInfo: (info: SearchInfo) => void) => SearchResult,
 ): { depth: number; nps: number; score: string; pv: string[] } {
   const pos = load(fen);
-  let lastInfo: SearchInfo | null = null;
   const t0 = performance.now();
-  run(pos, movetime, (info) => {
-    lastInfo = info;
-  });
+  const info = run(pos, movetime, () => {});
   const wall = performance.now() - t0;
-  const info = lastInfo!;
   console.log(
-    `${name.padEnd(10)} ${movetime / 1000}s:  score ${fmtScore(info).padStart(7)}  depth ${String(info.depth).padStart(2)}/${String(info.seldepth).padEnd(2)}  ` +
+    `${name.padEnd(14)} ${movetime / 1000}s:  score ${fmtScore(info).padStart(7)}  depth ${String(info.depth).padStart(2)}/${String(info.seldepth).padEnd(2)}  ` +
       `${info.nodes.toLocaleString().padStart(12)} nodes  ${(info.nps / 1e6).toFixed(2)}M nps  (${wall.toFixed(0)} ms)  pv: ${info.pvSan.slice(0, 8).join(' ')}`,
   );
   return { depth: info.depth, nps: info.nps, score: fmtScore(info), pv: info.pvSan };
@@ -54,33 +50,41 @@ function runNamed(
 function main() {
   const args = process.argv.slice(2);
   const time = args[0] === '--long' ? 10000 : 1000;
-  console.log(`Chess0 benchmark — ${time / 1000}s per position, v1 vs v2\n`);
+  console.log(`Chess0 benchmark — ${time / 1000}s per position, v1 vs v2 vs v3\n`);
 
   let startV1Depth = 0;
   const minV1Nps = [];
   const minV2Nps = [];
+  const minV3Nps = [];
   let startV2Depth = 0;
+  let startV3Depth = 0;
 
   for (const p of BENCH_POSITIONS) {
-    const r1 = runNamed(p.name, p.fen, time, (pos, mt, onInfo) => {
-      searchPosition(pos, { movetime: mt }, onInfo);
-    });
+    const r1 = runNamed(p.name, p.fen, time, (pos, mt, onInfo) =>
+      searchPosition(pos, { movetime: mt }, onInfo),
+    );
     if (p.name === 'startpos') startV1Depth = r1.depth;
     minV1Nps.push(r1.nps);
-    const r2 = runNamed(`${p.name} (v2)`, p.fen, time, (pos, mt, onInfo) => {
-      searchPositionV2(pos, { movetime: mt }, onInfo);
-    });
+    const r2 = runNamed(`${p.name} (v2)`, p.fen, time, (pos, mt, onInfo) =>
+      searchPositionV2(pos, { movetime: mt }, onInfo),
+    );
     if (p.name === 'startpos') startV2Depth = r2.depth;
     minV2Nps.push(r2.nps);
+    const r3 = runNamed(`${p.name} (v3)`, p.fen, time, (pos, mt, onInfo) =>
+      searchPositionV3(pos, { movetime: mt }, onInfo),
+    );
+    if (p.name === 'startpos') startV3Depth = r3.depth;
+    minV3Nps.push(r3.nps);
     console.log('');
   }
 
   const min1 = Math.min(...minV1Nps);
   const min2 = Math.min(...minV2Nps);
+  const min3 = Math.min(...minV3Nps);
   console.log(`GATE v1: nps >= 1M          ${min1 >= 1e6 ? 'PASS' : 'FAIL'}  (min ${(min1 / 1e6).toFixed(2)}M)`);
   console.log(`GATE v1: depth >= 9 @1s     ${startV1Depth >= 9 || time > 1000 ? 'PASS' : 'FAIL'}  (startpos depth ${startV1Depth})`);
-  console.log(`INFO v2: nps                (min ${(min2 / 1e6).toFixed(2)}M)`);
-  console.log(`INFO v2: startpos depth     ${startV2Depth}`);
+  console.log(`INFO v2: nps                (min ${(min2 / 1e6).toFixed(2)}M, startpos depth ${startV2Depth})`);
+  console.log(`INFO v3: nps                (min ${(min3 / 1e6).toFixed(2)}M, startpos depth ${startV3Depth})`);
 }
 
 main();

@@ -53,7 +53,7 @@ rl.on('line', (line) => {
 
   switch (cmd) {
     case 'uci':
-      console.log('id name Chess0 1.0');
+      console.log('id name Chess0 v3');
       console.log('id author Chess0 project');
       console.log('option name Hash type spin default 128 min 16 max 1024');
       console.log('uciok');
@@ -104,11 +104,11 @@ rl.on('line', (line) => {
           case 'infinite': p.infinite = true; break;
         }
       }
-      const limits: { depth?: number; movetime?: number } = {};
+      const limits: { depth?: number; movetime?: number; variant: 'v3' } = { variant: 'v3' };
       if (p.depth !== undefined) limits.depth = p.depth;
       const movetime = planTime(p);
       if (p.depth === undefined) {
-        limits.movetime = p.infinite ? 30000 : movetime ?? 3000;
+        limits.movetime = p.infinite ? 9500 : movetime ?? 6500;
       }
       const result = engine.search(limits, (info) => {
         console.log(infoLine(info.depth, info.seldepth, info.nodes, info.timeMs, scoreUci(info), info.pvUci));

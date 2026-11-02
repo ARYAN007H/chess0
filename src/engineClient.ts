@@ -4,6 +4,8 @@
  * stale results can be discarded.
  */
 
+import type { MultiPvLine } from './engine/search';
+
 export interface EngineScore {
   scoreCp?: number;
   scoreMate?: number;
@@ -19,6 +21,8 @@ export interface EngineInfoEvent extends EngineScore {
   stm: 0 | 1;
   pvUci: string[];
   pvSan: string[];
+  bookOpening?: string;
+  multiPv?: MultiPvLine[];
 }
 
 export interface EngineBestMove extends EngineInfoEvent {
@@ -28,8 +32,9 @@ export interface EngineBestMove extends EngineInfoEvent {
 export interface SearchOptions {
   depth?: number;
   movetime?: number;
-  /** 'v2' selects the stronger v2 search/eval stack in the worker. */
-  variant?: 'v1' | 'v2';
+  /** 'v2' or 'v3' selects the stronger search/eval stack in the worker. */
+  variant?: 'v1' | 'v2' | 'v3';
+  multiPv?: number;
   intent?: 'move' | 'eval';
 }
 
