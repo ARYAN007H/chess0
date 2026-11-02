@@ -31,7 +31,7 @@ on:
         default: ''
       match-pairs:
         description: 'Paired games (x2) for the acceptance gate'
-        default: '20'
+        default: '40'
 
 permissions:
   contents: write
@@ -161,7 +161,7 @@ jobs:
             --ref main \
             -f engine="$ENGINE" \
             -f corpus-games="$GAMES" \
-            -f match-pairs="${{ github.event.inputs.match-pairs || '20' }}"
+            -f match-pairs="${{ github.event.inputs.match-pairs || '40' }}"
           echo "chained next $ENGINE session (games=$GAMES)"
 
       - uses: actions/upload-artifact@v4
