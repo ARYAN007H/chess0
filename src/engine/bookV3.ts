@@ -459,6 +459,13 @@ function ensureBookBuilt(): Map<string, RawBookEntry[]> {
   return bookMap;
 }
 
+const ROOT_MOVE_NAMES: Record<string, { eco: string; opening: string; weight: number }> = {
+  e2e4: { eco: 'B00', opening: "King's Pawn Opening · Controls d5 & f5", weight: 100 },
+  d2d4: { eco: 'D00', opening: "Queen's Pawn Opening · Central Stake", weight: 98 },
+  g1f3: { eco: 'A04', opening: 'Réti / Zukertort Opening · Flexible Knight', weight: 94 },
+  c2c4: { eco: 'A10', opening: 'English Opening · Flank Central Control', weight: 92 },
+};
+
 /**
  * Returns legal book candidate moves for `pos`, sorted by descending weight.
  */
@@ -468,18 +475,20 @@ export function probeBookV3(pos: Position): BookCandidate[] {
   const entries = map.get(posKey(pos));
   if (!entries || entries.length === 0) return [];
 
+  const isRootStart = pos.ply === 0;
   const legals = legalMoves(pos);
   const out: BookCandidate[] = [];
   for (const e of entries) {
     for (let i = 0; i < legals.length; i++) {
       if (moveToUci(legals[i]) === e.uci) {
+        const rootOverride = isRootStart ? ROOT_MOVE_NAMES[e.uci] : undefined;
         out.push({
           move: legals[i],
           uci: e.uci,
           san: e.san,
-          weight: e.weight,
-          eco: e.eco,
-          opening: e.opening,
+          weight: rootOverride ? rootOverride.weight : e.weight,
+          eco: rootOverride ? rootOverride.eco : e.eco,
+          opening: rootOverride ? rootOverride.opening : e.opening,
           whiteWinPct: e.w,
           drawPct: e.d,
           blackWinPct: e.b,

@@ -4,6 +4,7 @@ interface EvalBarProps {
   evalPov: { cp?: number; mate?: number };
   orientation: 'white' | 'black';
   locked?: boolean;
+  heightPx?: number;
 }
 
 /** Map centipawns to a white-share percentage with a smooth win-probability sigmoid. */
@@ -14,43 +15,46 @@ function whiteShare(ev: { cp?: number; mate?: number }): number {
 }
 
 function label(ev: { cp?: number; mate?: number }): string {
-  if (ev.mate !== undefined) return `${ev.mate > 0 ? '+' : '−'}M${Math.abs(ev.mate)}`;
+  if (ev.mate !== undefined) return `M${Math.abs(ev.mate)}`;
   const cp = ev.cp ?? 0;
-  return `${cp > 0 ? '+' : cp < 0 ? '−' : ''}${(Math.abs(cp) / 100).toFixed(1)}`;
+  return (Math.abs(cp) / 100).toFixed(1);
 }
 
-export function EvalBar({ evalPov, orientation, locked }: EvalBarProps) {
+export function EvalBar({ evalPov, orientation, locked, heightPx }: EvalBarProps) {
   const share = useMemo(() => (locked ? 50 : whiteShare(evalPov)), [evalPov, locked]);
   const whiteAtBottom = orientation === 'white';
   const whiteAhead = (evalPov.mate !== undefined ? evalPov.mate : (evalPov.cp ?? 0)) >= 0;
 
   return (
     <div
-      className="flex h-full flex-col items-center gap-1.5 select-none"
-      title={locked ? 'Evaluation locked during Competitive / Live PvP match' : undefined}
+      className="relative flex w-6 shrink-0 flex-col overflow-hidden rounded-md bg-[#403d39] shadow-md ring-1 ring-black/30 select-none"
+      style={heightPx ? { height: `${heightPx}px` } : { height: '100%' }}
+      title={locked ? 'Evaluation hidden during Competitive / Puzzle play' : undefined}
     >
-      <div className="relative flex w-6 flex-1 flex-col overflow-hidden rounded-lg border border-stone-300/80 bg-[#18202c] shadow-inner dark:border-slate-700/80 dark:bg-[#131924]">
-        <div className={`flex h-full w-full flex-col ${whiteAtBottom ? 'flex-col-reverse' : ''}`}>
-          <div
-            className="w-full bg-[#f4f1ea] transition-[height] duration-300 ease-out dark:bg-slate-200"
-            style={{ height: `${share}%` }}
-          />
-          <div className="w-full flex-1 bg-[#1e2634] transition-all duration-300 ease-out dark:bg-[#151c28]" />
-        </div>
-        {/* Equal evaluation tick mark */}
-        <div className="pointer-events-none absolute inset-x-0 top-1/2 h-[1.5px] bg-emerald-500/70" />
+      <div className={`flex h-full w-full flex-col ${whiteAtBottom ? 'flex-col-reverse' : ''}`}>
+        <div
+          className="w-full bg-[#ffffff] transition-[height] duration-300 ease-out"
+          style={{ height: `${share}%` }}
+        />
+        <div className="w-full flex-1 bg-[#403d39] transition-all duration-300 ease-out" />
       </div>
-      <span
-        className={`w-11 text-center font-mono text-[10px] font-bold tabular-nums tracking-tight ${
-          locked
-            ? 'text-amber-600 dark:text-amber-400'
-            : whiteAhead
-              ? 'text-slate-800 dark:text-slate-200'
-              : 'text-slate-500 dark:text-slate-400'
-        }`}
-      >
-        {locked ? 'LOCK' : label(evalPov)}
-      </span>
+
+      {/* Center equality tick */}
+      <div className="pointer-events-none absolute inset-x-0 top-1/2 h-[1.5px] bg-[#81b64c]/60" />
+
+      {/* Score label pinned inside top or bottom of the bar like Chess.com */}
+      {!locked && (
+        <span
+          className={`pointer-events-none absolute inset-x-0 text-center font-mono text-[9.5px] font-extrabold tracking-tighter tabular-nums ${
+            (whiteAhead && whiteAtBottom) || (!whiteAhead && !whiteAtBottom)
+              ? 'bottom-1.5 text-[#403d39]'
+              : 'top-1.5 text-[#ffffff]'
+          }`}
+        >
+          {label(evalPov)}
+        </span>
+      )}
     </div>
   );
 }
+

@@ -36,9 +36,8 @@ export function AnalysisPanel({
   onSelectPly,
   onAnalyzeDeeper,
 }: AnalysisPanelProps) {
-  // Build SVG points for the evaluation graph (0..100 win prob for White)
   const width = 340;
-  const height = 84;
+  const height = 80;
   const points = [
     { ply: 0, y: height * (1 - cpToWinProb(15) / 100) },
     ...history.map((h) => {
@@ -67,40 +66,40 @@ export function AnalysisPanel({
   const moveMeta = displayedMove ? CLASSIFICATION_META[displayedMove.analysis.classification] : null;
 
   return (
-    <div className="space-y-3 rounded-xl border border-stone-200/90 bg-white/85 p-3.5 dark:border-slate-800 dark:bg-slate-900/60">
+    <div className="space-y-3">
       {/* Move Coach / Classification Card */}
-      <div className="rounded-lg border border-stone-200/80 bg-stone-50/80 p-3 dark:border-slate-800 dark:bg-slate-800/45">
+      <div className="rounded-lg border border-stone-200 bg-stone-50 p-3 dark:border-white/10 dark:bg-[#1f1e1b]">
         {displayedMove && moveMeta ? (
-          <div className="space-y-1.5">
+          <div className="space-y-2">
             <div className="flex items-center justify-between gap-2">
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-2.5">
                 <span
-                  className="flex h-6 min-w-6 items-center justify-center rounded-md px-1.5 font-mono text-xs font-extrabold text-white shadow-sm"
+                  className="flex h-6 min-w-6 items-center justify-center rounded-md px-1.5 font-mono text-xs font-extrabold text-white shadow-xs"
                   style={{ backgroundColor: moveMeta.badgeBg }}
                 >
                   {moveMeta.symbol}
                 </span>
                 <div>
-                  <div className="flex items-center gap-1.5 text-sm font-bold text-slate-900 dark:text-slate-100">
+                  <div className="flex items-center gap-1.5 text-sm font-bold text-stone-900 dark:text-white">
                     <span>
                       {Math.ceil(displayedMove.ply / 2)}
                       {displayedMove.ply % 2 === 1 ? '.' : '…'} {displayedMove.san}
                     </span>
-                    <span className="text-slate-400">·</span>
+                    <span className="text-stone-400">·</span>
                     <span style={{ color: moveMeta.badgeBg }}>{moveMeta.label}</span>
                   </div>
-                  <p className="text-[11px] text-slate-500 dark:text-slate-400">
+                  <p className="text-[11px] text-stone-500 dark:text-[#a09e99]">
                     {moveMeta.description}
                   </p>
                 </div>
               </div>
 
               <div className="text-right font-mono">
-                <div className="text-xs font-bold tabular-nums text-slate-900 dark:text-slate-100">
+                <div className="text-xs font-bold tabular-nums text-stone-900 dark:text-white">
                   {formatEvalText(displayedMove.analysis.evalWhiteCp, displayedMove.analysis.evalWhiteMate)}
                 </div>
-                <div className="text-[10px] tabular-nums text-slate-500 dark:text-slate-400">
-                  {displayedMove.analysis.moveAccuracy.toFixed(0)}% move acc
+                <div className="text-[10px] tabular-nums text-stone-500 dark:text-[#a09e99]">
+                  {displayedMove.analysis.moveAccuracy.toFixed(0)}% acc
                 </div>
               </div>
             </div>
@@ -111,20 +110,20 @@ export function AnalysisPanel({
               (displayedMove.analysis.classification === 'inaccuracy' ||
                 displayedMove.analysis.classification === 'mistake' ||
                 displayedMove.analysis.classification === 'blunder') && (
-                <div className="flex items-center justify-between rounded border border-stone-200/80 bg-white px-2.5 py-1.5 text-xs dark:border-slate-700/80 dark:bg-slate-900/70">
-                  <span className="text-slate-600 dark:text-slate-300">
-                    Best alternative was{' '}
-                    <strong className="font-mono font-bold text-emerald-600 dark:text-emerald-400">
+                <div className="flex items-center justify-between rounded-md border border-stone-200 bg-white px-2.5 py-1.5 text-xs dark:border-white/10 dark:bg-[#2a2926]">
+                  <span className="text-stone-600 dark:text-[#d5d4d0]">
+                    Best was{' '}
+                    <strong className="font-mono font-bold text-[#5d8c30] dark:text-[#95c95e]">
                       {displayedMove.analysis.bestAlternativeSan}
                     </strong>{' '}
-                    <span className="font-mono text-[11px] text-slate-400">
-                      (−{(displayedMove.analysis.cpLoss / 100).toFixed(2)} eval loss)
+                    <span className="font-mono text-[11px] text-stone-400">
+                      (−{(displayedMove.analysis.cpLoss / 100).toFixed(2)})
                     </span>
                   </span>
                   <button
                     type="button"
                     onClick={onAnalyzeDeeper}
-                    className="font-semibold text-emerald-600 hover:underline dark:text-emerald-400"
+                    className="font-bold text-[#5d8c30] hover:underline dark:text-[#95c95e]"
                   >
                     Inspect 3 Lines
                   </button>
@@ -132,12 +131,12 @@ export function AnalysisPanel({
               )}
           </div>
         ) : (
-          <div className="flex items-center justify-between text-xs text-slate-500 dark:text-slate-400">
+          <div className="flex items-center justify-between text-xs text-stone-500 dark:text-[#a09e99]">
             <span>Make a move or click any ply in the move list to inspect move quality.</span>
             <button
               type="button"
               onClick={onAnalyzeDeeper}
-              className="shrink-0 font-semibold text-emerald-600 hover:underline dark:text-emerald-400"
+              className="shrink-0 font-bold text-[#5d8c30] hover:underline dark:text-[#95c95e]"
             >
               Scan Position
             </button>
@@ -147,13 +146,13 @@ export function AnalysisPanel({
 
       {/* Interactive SVG Evaluation Timeline Graph */}
       <div>
-        <div className="mb-1 flex items-center justify-between text-[11px] text-slate-500 dark:text-slate-400">
-          <span className="font-semibold uppercase tracking-wider">Evaluation Timeline</span>
+        <div className="mb-1 flex items-center justify-between text-[10px] font-bold uppercase tracking-wider text-stone-500 dark:text-[#9e9c98]">
+          <span>Evaluation Graph</span>
           <span className="font-mono tabular-nums">
             Ply {activePly}/{history.length}
           </span>
         </div>
-        <div className="relative overflow-hidden rounded-lg border border-stone-300/80 bg-[#1a2230] dark:border-slate-800">
+        <div className="relative overflow-hidden rounded-lg border border-stone-300 bg-[#1f1e1b] dark:border-white/10">
           <svg
             viewBox={`0 0 ${width} ${height}`}
             className="block h-20 w-full cursor-pointer"
@@ -165,21 +164,17 @@ export function AnalysisPanel({
               onSelectPly(targetPly);
             }}
           >
-            {/* Midline (0.00 Equal) */}
             <line
               x1={0}
               y1={height / 2}
               x2={width}
               y2={height / 2}
-              stroke="rgba(16, 185, 129, 0.35)"
+              stroke="rgba(129, 182, 76, 0.35)"
               strokeDasharray="3 3"
               strokeWidth={1}
             />
-            {/* White advantage fill */}
-            <polygon points={areaPoints} fill="rgba(244, 241, 234, 0.88)" />
-            {/* Evaluation curve */}
-            <polyline fill="none" stroke="#10b981" strokeWidth={2} points={polylinePoints} />
-            {/* Active ply cursor */}
+            <polygon points={areaPoints} fill="rgba(255, 255, 255, 0.88)" />
+            <polyline fill="none" stroke="#81b64c" strokeWidth={2} points={polylinePoints} />
             {history.length > 0 && (
               <>
                 <line
@@ -187,15 +182,15 @@ export function AnalysisPanel({
                   y1={0}
                   x2={cursorX}
                   y2={height}
-                  stroke="#38bdf8"
+                  stroke="#f59e0b"
                   strokeWidth={1.5}
                 />
                 <circle
                   cx={cursorX}
                   cy={activePoint.y}
                   r={3.5}
-                  fill="#38bdf8"
-                  stroke="#0b0f17"
+                  fill="#f59e0b"
+                  stroke="#1f1e1b"
                   strokeWidth={1.5}
                 />
               </>
@@ -206,42 +201,42 @@ export function AnalysisPanel({
 
       {/* Per-Side Accuracy Cards */}
       <div className="grid grid-cols-2 gap-2">
-        <div className="rounded-lg border border-stone-200/90 bg-stone-50/70 px-3 py-2 dark:border-slate-800 dark:bg-slate-800/40">
-          <div className="text-[11px] font-semibold text-slate-500 dark:text-slate-400">
+        <div className="rounded-lg border border-stone-200 bg-stone-50 px-3 py-2 dark:border-white/10 dark:bg-[#1f1e1b]">
+          <div className="text-[10px] font-bold uppercase tracking-wider text-stone-500 dark:text-[#9e9c98]">
             ♔ White Accuracy
           </div>
-          <div className="mt-0.5 font-mono text-lg font-extrabold tabular-nums text-slate-900 dark:text-slate-100">
+          <div className="mt-0.5 font-mono text-lg font-black tabular-nums text-stone-900 dark:text-white">
             {summary.whiteAccuracy !== null ? `${summary.whiteAccuracy.toFixed(1)}%` : '—'}
           </div>
         </div>
-        <div className="rounded-lg border border-stone-200/90 bg-stone-50/70 px-3 py-2 dark:border-slate-800 dark:bg-slate-800/40">
-          <div className="text-[11px] font-semibold text-slate-500 dark:text-slate-400">
+        <div className="rounded-lg border border-stone-200 bg-stone-50 px-3 py-2 dark:border-white/10 dark:bg-[#1f1e1b]">
+          <div className="text-[10px] font-bold uppercase tracking-wider text-stone-500 dark:text-[#9e9c98]">
             ♚ Black Accuracy
           </div>
-          <div className="mt-0.5 font-mono text-lg font-extrabold tabular-nums text-slate-900 dark:text-slate-100">
+          <div className="mt-0.5 font-mono text-lg font-black tabular-nums text-stone-900 dark:text-white">
             {summary.blackAccuracy !== null ? `${summary.blackAccuracy.toFixed(1)}%` : '—'}
           </div>
         </div>
       </div>
 
       {/* Classification Breakdown Table */}
-      <div className="overflow-hidden rounded-lg border border-stone-200/80 dark:border-slate-800">
+      <div className="overflow-hidden rounded-lg border border-stone-200 dark:border-white/10">
         <table className="w-full text-xs">
           <thead>
-            <tr className="border-b border-stone-200/80 bg-stone-100/70 text-[10px] font-bold uppercase tracking-wider text-slate-500 dark:border-slate-800 dark:bg-slate-800/60 dark:text-slate-400">
-              <th className="py-1.5 pl-2.5 text-left">Classification</th>
+            <tr className="border-b border-stone-200 bg-stone-100 text-[10px] font-bold uppercase tracking-wider text-stone-500 dark:border-white/10 dark:bg-[#1f1e1b] dark:text-[#9e9c98]">
+              <th className="py-1.5 pl-2.5 text-left">Move Type</th>
               <th className="py-1.5 text-center">White</th>
               <th className="py-1.5 pr-2.5 text-center">Black</th>
             </tr>
           </thead>
-          <tbody className="divide-y divide-stone-200/50 dark:divide-slate-800/60">
+          <tbody className="divide-y divide-stone-200/60 dark:divide-white/5">
             {BREAKDOWN_ORDER.map((cl) => {
               const meta = CLASSIFICATION_META[cl];
               const wCount = summary.counts.white[cl];
               const bCount = summary.counts.black[cl];
               return (
-                <tr key={cl} className="hover:bg-stone-100/50 dark:hover:bg-slate-800/30">
-                  <td className="flex items-center gap-2 py-1 pl-2.5 font-medium text-slate-700 dark:text-slate-300">
+                <tr key={cl} className="hover:bg-stone-100/60 dark:hover:bg-white/[0.03]">
+                  <td className="flex items-center gap-2 py-1 pl-2.5 font-semibold text-stone-700 dark:text-[#d5d4d0]">
                     <span
                       className="inline-flex h-4 w-5 items-center justify-center rounded text-[10px] font-extrabold text-white"
                       style={{ backgroundColor: meta.badgeBg }}
@@ -250,10 +245,10 @@ export function AnalysisPanel({
                     </span>
                     <span>{meta.label}</span>
                   </td>
-                  <td className="py-1 text-center font-mono font-semibold tabular-nums text-slate-800 dark:text-slate-200">
+                  <td className="py-1 text-center font-mono font-bold tabular-nums text-stone-800 dark:text-white">
                     {wCount}
                   </td>
-                  <td className="py-1 pr-2.5 text-center font-mono font-semibold tabular-nums text-slate-800 dark:text-slate-200">
+                  <td className="py-1 pr-2.5 text-center font-mono font-bold tabular-nums text-stone-800 dark:text-white">
                     {bCount}
                   </td>
                 </tr>

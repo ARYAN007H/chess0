@@ -178,7 +178,10 @@ export function useChessGame() {
   const [puzzleStatus, setPuzzleStatus] = useState<
     'solving' | 'correct_step' | 'solved' | 'failed'
   >('solving');
-  const [puzzleShowHint, setPuzzleShowHint] = useState(false);
+  const [puzzleHintLevel, setPuzzleHintLevel] = useState<0 | 1 | 2>(0);
+  const [puzzleHintSquare, setPuzzleHintSquare] = useState<string | null>(null);
+  const puzzleShowHint = puzzleHintLevel > 0;
+  const [academyShowHint, setAcademyShowHint] = useState(false);
   const [puzzleRating, setPuzzleRating] = useState<number>(() => {
     try {
       const r = Number(localStorage.getItem('chess0-puzzle-rating'));
@@ -248,14 +251,14 @@ export function useChessGame() {
       const saved = localStorage.getItem('chess0-theme');
       if (saved === 'light' || saved === 'dark') return saved;
     } catch {}
-    return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+    return 'dark';
   });
   const [boardTheme, setBoardTheme] = useState<BoardTheme>(() => {
     try {
       const saved = localStorage.getItem('chess0-board-theme') as BoardTheme | null;
       if (saved && ['walnut', 'slate', 'emerald', 'arctic'].includes(saved)) return saved;
     } catch {}
-    return 'walnut';
+    return 'emerald';
   });
 
   const configRef = useRef({
@@ -919,7 +922,10 @@ export function useChessGame() {
       setPlayerSide(puz.sideToSolve);
       setPuzzleStepIndex(0);
       setPuzzleStatus('solving');
-      setPuzzleShowHint(false);
+      setPuzzleHintLevel(0);
+      setPuzzleHintSquare(null);
+      setPvArrow(null);
+      setEngineInfo(EMPTY_INFO);
       setEvalPov({ cp: evalV3WhitePov(engine.pos) });
       setGameId((g) => g + 1);
     },
@@ -935,13 +941,28 @@ export function useChessGame() {
     startPuzzle(activePuzzleIndex);
   }, [activePuzzleIndex, startPuzzle]);
 
-  const revealPuzzleSolution = useCallback(() => {
-    const puz = PUZZLE_LIBRARY[activePuzzleIndex % PUZZLE_LIBRARY.length];
-    const nextExpectedUci = puz.solutionUci[puzzleStepIndex];
-    if (!nextExpectedUci) return;
-    setPvArrow([nextExpectedUci.slice(0, 2), nextExpectedUci.slice(2, 4)]);
-    setPuzzleShowHint(true);
-  }, [activePuzzleIndex, puzzleStepIndex]);
+  const revealPuzzleSolution = useCallback(
+    (forceArrow = false) => {
+      const puz = PUZZLE_LIBRARY[activePuzzleIndex % PUZZLE_LIBRARY.length];
+      const nextExpectedUci = puz.solutionUci[puzzleStepIndex];
+      if (!nextExpectedUci) return;
+      const fromSq = nextExpectedUci.slice(0, 2);
+      const toSq = nextExpectedUci.slice(2, 4);
+
+      if (puzzleHintLevel === 0 && !forceArrow) {
+        // Stage 1: Give verbal hint + highlight the piece to move on the board (no arrow spoiler yet)
+        setPuzzleHintLevel(1);
+        setPuzzleHintSquare(fromSq);
+        setPvArrow(null);
+      } else {
+        // Stage 2: Draw full solution arrow on the board
+        setPuzzleHintLevel(2);
+        setPuzzleHintSquare(fromSq);
+        setPvArrow([fromSq, toSq]);
+      }
+    },
+    [activePuzzleIndex, puzzleHintLevel, puzzleStepIndex],
+  );
 
   // --- Interactive Chess Academy Actions -----------------------------------
 
@@ -954,13 +975,15 @@ export function useChessGame() {
     (moduleId: string, stepIdx = 0) => {
       const { engine, client } = ensureInit();
       tokenRef.current++;
-      const mod = ACADEMY_MODULES.find((m) => m.id === moduleId) ?? ACADEMY_MODULES[0];
-      const clampedStep = Math.max(0, Math.min(stepIdx, mod.steps.length - 1));
-      const step = mod.steps[clampedStep];
+      const mod = ACADEMY_MODULES.find((m) => m.id === activeModuleId || m.id === moduleId);
+      const resolvedMod = ACADEMY_MODULES.find((m) => m.id === moduleId) ?? mod ?? ACADEMY_MODULES[0];
+      const clampedStep = Math.max(0, Math.min(stepIdx, resolvedMod.steps.length - 1));
+      const step = resolvedMod.steps[clampedStep];
 
-      setActiveModuleId(mod.id);
+      setActiveModuleId(resolvedMod.id);
       setActiveStepIndex(clampedStep);
       setLessonStatus('prompt');
+      setAcademyShowHint(false);
       setMode('academy');
       setEveRunning(false);
       setThinkingSide(null);
@@ -982,10 +1005,23 @@ export function useChessGame() {
       setOrientation(stm);
       setPlayerSide(stm);
       setPvArrow(null);
+      setEngineInfo(EMPTY_INFO);
       setEvalPov({ cp: evalV3WhitePov(engine.pos) });
       setGameId((g) => g + 1);
     },
-    [ensureInit],
+    [activeModuleId, ensureInit],
+  );
+
+  const revealAcademyHint = useCallback(
+    (uciOverride?: string) => {
+      const step = activeModule.steps[activeStepIndex];
+      const uci = uciOverride || step?.correctUci[0];
+      setAcademyShowHint(true);
+      if (uci && uci.length >= 4) {
+        setPvArrow([uci.slice(0, 2), uci.slice(2, 4)]);
+      }
+    },
+    [activeModule.steps, activeStepIndex],
   );
 
   // --- Mode & Settings Switchers -------------------------------------------
@@ -1389,6 +1425,9 @@ export function useChessGame() {
           } else {
             // Play opponent's forced reply after 320ms
             setPuzzleStatus('correct_step');
+            setPuzzleHintLevel(0);
+            setPuzzleHintSquare(null);
+            setPvArrow(null);
             const replyUci = activePuzzle.solutionUci[nextStep];
             window.setTimeout(() => {
               const replyMove = engineRef.current?.uciToMove(replyUci) ?? null;
@@ -1600,12 +1639,15 @@ export function useChessGame() {
     puzzleStepIndex,
     puzzleStatus,
     puzzleShowHint,
+    puzzleHintLevel,
+    puzzleHintSquare,
     puzzleRating,
     puzzleStreak,
     solvedPuzzleIds,
     activeModule,
     activeStepIndex,
     lessonStatus,
+    academyShowHint,
     completedLessons,
     fen: displayedFen,
     liveFen: fen,
@@ -1671,6 +1713,7 @@ export function useChessGame() {
     retryPuzzle,
     revealPuzzleSolution,
     startAcademyLesson,
+    revealAcademyHint,
     onSquareClick,
     onPieceDrop,
     choosePromotion,

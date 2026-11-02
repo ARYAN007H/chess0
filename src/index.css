@@ -15,7 +15,7 @@ html.dark {
 }
 
 body {
-  @apply bg-[#f6f5f2] text-slate-900 dark:bg-[#0b0f17] dark:text-slate-100 antialiased selection:bg-emerald-500/20 selection:text-emerald-600 dark:selection:text-emerald-300;
+  @apply bg-[#f1efe9] text-stone-900 dark:bg-[#302e2b] dark:text-[#f8f8f6] antialiased selection:bg-[#81b64c]/25 selection:text-[#81b64c];
   font-feature-settings: 'cv02', 'cv03', 'cv04', 'cv11';
 }
 

@@ -12,6 +12,7 @@ interface BoardPanelProps {
   fen: string;
   orientation: 'white' | 'black';
   selected: string | null;
+  hintSquare?: string | null;
   legalTargets: Set<string>;
   captureTargets: Set<string>;
   lastMove: { from: string; to: string } | null;
@@ -21,6 +22,7 @@ interface BoardPanelProps {
   showMultiPvArrows: boolean;
   lastMoveAnalysis?: MoveAnalysisData | null;
   gameId: number;
+  boardWidth?: number;
   onSquareClick: (square: string) => void;
   onPieceDrop: (from: string, to: string) => boolean;
   boardTheme: BoardTheme;
@@ -30,54 +32,58 @@ export const BOARD_PALETTES: Record<
   BoardTheme,
   { label: string; light: string; dark: string; frame: string }
 > = {
+  emerald: {
+    label: 'Championship Green',
+    light: '#ebecd0',
+    dark: '#739552',
+    frame: 'ring-black/25 dark:ring-black/40',
+  },
   walnut: {
     label: 'Tournament Walnut',
     light: '#edd6b0',
     dark: '#b88762',
-    frame: 'ring-stone-900/15 dark:ring-white/10',
+    frame: 'ring-stone-900/20 dark:ring-black/40',
   },
   slate: {
     label: 'Nordic Slate',
     light: '#dee3e6',
     dark: '#788a94',
-    frame: 'ring-slate-900/15 dark:ring-white/10',
-  },
-  emerald: {
-    label: 'Championship Club',
-    light: '#eeeed2',
-    dark: '#769656',
-    frame: 'ring-emerald-950/15 dark:ring-white/10',
+    frame: 'ring-slate-900/20 dark:ring-black/40',
   },
   arctic: {
     label: 'Obsidian Ice',
     light: '#d8e4ec',
     dark: '#4b6578',
-    frame: 'ring-sky-950/15 dark:ring-white/10',
+    frame: 'ring-sky-950/20 dark:ring-black/40',
   },
 };
 
 /** Radial dot for quiet legal moves; ring for captures. */
 const DOT_STYLE: React.CSSProperties = {
-  background: 'radial-gradient(circle, rgba(16, 185, 129, 0.58) 23%, transparent 25%)',
+  background: 'radial-gradient(circle, rgba(0, 0, 0, 0.22) 21%, transparent 23%)',
 };
 const RING_STYLE: React.CSSProperties = {
-  background: 'radial-gradient(circle, transparent 58%, rgba(16, 185, 129, 0.62) 61%)',
+  background: 'radial-gradient(circle, transparent 59%, rgba(0, 0, 0, 0.24) 62%)',
 };
 const SELECTED_STYLE: React.CSSProperties = {
-  background: 'rgba(16, 185, 129, 0.42)',
+  background: 'rgba(255, 255, 51, 0.5)',
 };
 const LAST_MOVE_STYLE: React.CSSProperties = {
-  background: 'rgba(245, 158, 11, 0.36)',
+  background: 'rgba(245, 246, 130, 0.48)',
+};
+const HINT_SQUARE_STYLE: React.CSSProperties = {
+  background: 'rgba(129, 182, 76, 0.62)',
+  boxShadow: 'inset 0 0 0 3px rgba(255, 255, 255, 0.85)',
 };
 const CHECK_STYLE: React.CSSProperties = {
   background:
-    'radial-gradient(circle, rgba(239, 68, 68, 0.88) 14%, rgba(239, 68, 68, 0.38) 48%, transparent 74%)',
+    'radial-gradient(circle, rgba(239, 68, 68, 0.9) 16%, rgba(239, 68, 68, 0.42) 52%, transparent 74%)',
 };
 
 const MULTIPV_COLORS = [
-  'rgba(16, 185, 129, 0.88)', // Rank #1 Picked Best Move (Emerald)
-  'rgba(14, 165, 233, 0.72)', // Rank #2 Alternative (Sky)
-  'rgba(245, 158, 11, 0.65)', // Rank #3 Alternative (Amber)
+  'rgba(129, 182, 76, 0.92)', // Rank #1 Best Move (Chess.com Green)
+  'rgba(56, 189, 248, 0.80)', // Rank #2 Alternative (Sky)
+  'rgba(245, 158, 11, 0.75)', // Rank #3 Alternative (Amber)
 ];
 
 function squareOverlayCoords(
@@ -97,13 +103,16 @@ function squareOverlayCoords(
 }
 
 export function BoardPanel(props: BoardPanelProps) {
-  const palette = BOARD_PALETTES[props.boardTheme] ?? BOARD_PALETTES.walnut;
+  const palette = BOARD_PALETTES[props.boardTheme] ?? BOARD_PALETTES.emerald;
 
   const squareStyles = useMemo(() => {
     const styles: Record<string, React.CSSProperties> = {};
     if (props.lastMove !== null) {
       styles[props.lastMove.from] = { ...styles[props.lastMove.from], ...LAST_MOVE_STYLE };
       styles[props.lastMove.to] = { ...styles[props.lastMove.to], ...LAST_MOVE_STYLE };
+    }
+    if (props.hintSquare) {
+      styles[props.hintSquare] = { ...styles[props.hintSquare], ...HINT_SQUARE_STYLE };
     }
     if (props.checkSquare !== null) {
       styles[props.checkSquare] = { ...styles[props.checkSquare], ...CHECK_STYLE };
@@ -115,7 +124,14 @@ export function BoardPanel(props: BoardPanelProps) {
       styles[sq] = { ...styles[sq], ...(props.captureTargets.has(sq) ? RING_STYLE : DOT_STYLE) };
     }
     return styles;
-  }, [props.lastMove, props.checkSquare, props.selected, props.legalTargets, props.captureTargets]);
+  }, [
+    props.lastMove,
+    props.hintSquare,
+    props.checkSquare,
+    props.selected,
+    props.legalTargets,
+    props.captureTargets,
+  ]);
 
   const arrows = useMemo(() => {
     const arr: [string, string, string][] = [];
@@ -133,7 +149,7 @@ export function BoardPanel(props: BoardPanelProps) {
       const to = missedBestUci.slice(2, 4);
       const key = `${from}-${to}`;
       seen.add(key);
-      arr.push([from, to, 'rgba(16, 185, 129, 0.85)']);
+      arr.push([from, to, MULTIPV_COLORS[0]]);
     }
 
     if (props.showMultiPvArrows && props.multiPv.length > 0) {
@@ -173,11 +189,17 @@ export function BoardPanel(props: BoardPanelProps) {
 
   return (
     <div
-      className={`relative w-full overflow-hidden rounded-xl shadow-2xl ring-1 ${palette.frame}`}
+      className={`relative overflow-hidden rounded-md shadow-2xl ring-1 ${palette.frame}`}
+      style={
+        props.boardWidth
+          ? { width: `${props.boardWidth}px`, height: `${props.boardWidth}px` }
+          : undefined
+      }
     >
       <Chessboard
         id={`chess0-${props.gameId}`}
         position={props.fen}
+        boardWidth={props.boardWidth}
         boardOrientation={props.orientation}
         onSquareClick={(square: string) => props.onSquareClick(square)}
         onPieceDrop={(from: string, to: string) => props.onPieceDrop(from, to)}
@@ -186,7 +208,7 @@ export function BoardPanel(props: BoardPanelProps) {
         customLightSquareStyle={{ backgroundColor: palette.light }}
         customDarkSquareStyle={{ backgroundColor: palette.dark }}
         customBoardStyle={{ borderRadius: 0 }}
-        animationDuration={200}
+        animationDuration={180}
       />
 
       {/* Move classification badge anchored on the destination square of the last move */}
@@ -212,3 +234,4 @@ export function BoardPanel(props: BoardPanelProps) {
     </div>
   );
 }
+

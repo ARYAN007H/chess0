@@ -46,7 +46,7 @@ export function MoveList({ history, activePly, onSelectPly, onCopyFen }: MoveLis
   };
 
   const renderCell = (entry?: HistoryEntry) => {
-    if (!entry) return <td className="w-[44%] py-1 px-2" />;
+    if (!entry) return <td className="w-[44%] py-0.5 px-2" />;
     const isSelected = activePly === entry.ply;
     const meta = CLASSIFICATION_META[entry.analysis.classification];
     const showBadge =
@@ -63,10 +63,10 @@ export function MoveList({ history, activePly, onSelectPly, onCopyFen }: MoveLis
         <button
           type="button"
           onClick={() => onSelectPly(entry.ply)}
-          className={`flex w-full items-center justify-between rounded-md px-2 py-1 text-left font-mono text-xs transition ${
+          className={`flex w-full items-center justify-between rounded px-2 py-0.5 text-left font-mono text-xs transition ${
             isSelected
-              ? 'bg-emerald-500/15 font-bold text-emerald-800 ring-1 ring-emerald-500/40 dark:bg-emerald-500/20 dark:text-emerald-200'
-              : 'font-medium text-slate-700 hover:bg-stone-100 dark:text-slate-200 dark:hover:bg-slate-800/70'
+              ? 'bg-[#81b64c]/20 font-bold text-[#6fa13d] ring-1 ring-[#81b64c]/50 dark:bg-[#81b64c]/25 dark:text-[#b2e07c]'
+              : 'font-medium text-stone-700 hover:bg-stone-200/70 dark:text-[#d5d4d0] dark:hover:bg-white/5'
           }`}
         >
           <span className="truncate">{entry.san}</span>
@@ -85,42 +85,45 @@ export function MoveList({ history, activePly, onSelectPly, onCopyFen }: MoveLis
   };
 
   return (
-    <div className="rounded-xl border border-stone-200/90 bg-white/85 dark:border-slate-800 dark:bg-slate-900/60">
-      <div className="flex items-center justify-between border-b border-stone-200/80 px-3 py-2 dark:border-slate-800">
-        <span className="text-[11px] font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">
-          Move Notation · {history.length} {history.length === 1 ? 'ply' : 'plies'}
+    <div className="rounded-lg border border-stone-200 bg-stone-50 dark:border-white/10 dark:bg-[#1f1e1b]">
+      <div className="flex items-center justify-between border-b border-stone-200 px-3 py-1.5 dark:border-white/10">
+        <span className="text-[10px] font-extrabold uppercase tracking-wider text-stone-500 dark:text-[#9e9c98]">
+          Moves · {history.length} {history.length === 1 ? 'ply' : 'plies'}
         </span>
-        <div className="flex items-center gap-2 text-[11px] font-semibold">
+        <div className="flex items-center gap-2 text-[11px] font-bold">
           <button
             type="button"
             onClick={handleCopyFen}
-            className="text-slate-500 transition hover:text-emerald-600 dark:text-slate-400 dark:hover:text-emerald-400"
+            className="text-stone-500 transition hover:text-[#5d8c30] dark:text-[#9e9c98] dark:hover:text-[#95c95e]"
           >
-            {fenCopied ? '✓ FEN Copied' : 'Copy FEN'}
+            {fenCopied ? '✓ FEN' : 'FEN'}
           </button>
-          <span className="text-slate-300 dark:text-slate-700">·</span>
+          <span className="text-stone-300 dark:text-white/15">·</span>
           <button
             type="button"
             onClick={copyPgn}
             disabled={history.length === 0}
-            className="text-slate-500 transition hover:text-emerald-600 disabled:opacity-40 dark:text-slate-400 dark:hover:text-emerald-400"
+            className="text-stone-500 transition hover:text-[#5d8c30] disabled:opacity-40 dark:text-[#9e9c98] dark:hover:text-[#95c95e]"
           >
-            {pgnCopied ? '✓ PGN Copied' : 'Copy PGN'}
+            {pgnCopied ? '✓ PGN' : 'PGN'}
           </button>
         </div>
       </div>
 
-      <div ref={containerRef} className="scroll-thin h-44 overflow-y-auto p-1.5">
+      <div ref={containerRef} className="scroll-thin max-h-36 overflow-y-auto p-1">
         {rows.length === 0 ? (
-          <p className="py-10 text-center text-xs text-slate-400 dark:text-slate-500">
-            No moves played yet. Make a move on the board or select an opening line.
+          <p className="py-4 text-center text-[11px] text-stone-400 dark:text-[#7c7a75]">
+            Make a move on the board to begin recording notation.
           </p>
         ) : (
           <table className="w-full border-collapse">
             <tbody>
-              {rows.map((row) => (
-                <tr key={row.no} className="border-b border-stone-100/80 last:border-none dark:border-slate-800/40">
-                  <td className="w-[12%] py-1 pl-2 pr-1 text-right font-mono text-[11px] tabular-nums text-slate-400 dark:text-slate-500">
+              {rows.map((row, idx) => (
+                <tr
+                  key={row.no}
+                  className={idx % 2 === 1 ? 'bg-stone-100/60 dark:bg-white/[0.02]' : ''}
+                >
+                  <td className="w-[12%] py-0.5 pl-2 pr-1 text-right font-mono text-[11px] tabular-nums text-stone-400 dark:text-[#7c7a75]">
                     {row.no}.
                   </td>
                   {renderCell(row.white)}

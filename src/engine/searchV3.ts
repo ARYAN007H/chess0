@@ -993,8 +993,16 @@ export function searchPositionV3(
       }
     }
 
-    // Rank all 3 candidate lines by their evaluated score and pick the strongest (#1)
-    candidates.sort((a, b) => b.rawScore - a.rawScore);
+    // Rank all 3 candidate lines by their evaluated score (with master book weight tie-breaker in opening)
+    candidates.sort((a, b) => {
+      const diff = b.rawScore - a.rawScore;
+      if (Math.abs(diff) <= 10 && bookCandidates.length > 0 && pos.fullmove <= 8) {
+        const wA = bookCandidates.find((bm) => bm.move === a.move)?.weight ?? 0;
+        const wB = bookCandidates.find((bm) => bm.move === b.move)?.weight ?? 0;
+        if (wA !== wB) return wB - wA;
+      }
+      return diff;
+    });
     const winner = candidates[0];
 
     // Ensure root TT stores the winning move

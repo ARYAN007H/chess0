@@ -37,11 +37,11 @@ function LevelSelect({
   return (
     <label className="flex items-center gap-2 text-xs">
       <span className={`inline-block h-2.5 w-2.5 shrink-0 rounded-full ${accent}`} />
-      <span className="w-14 shrink-0 font-semibold text-slate-600 dark:text-slate-300">
+      <span className="w-14 shrink-0 font-bold text-stone-600 dark:text-[#c4c2bd]">
         {side}
       </span>
       <select
-        className="min-w-0 flex-1 rounded-lg border border-stone-300 bg-white px-2.5 py-1.5 text-xs font-semibold text-slate-800 focus:border-emerald-500 focus:outline-none dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
+        className="min-w-0 flex-1 rounded-lg border border-stone-300 bg-white px-2.5 py-1.5 text-xs font-bold text-stone-800 focus:border-[#81b64c] focus:outline-none dark:border-white/10 dark:bg-[#1f1e1b] dark:text-white"
         value={value}
         onChange={(e) => onChange(e.target.value as Level)}
       >
@@ -56,20 +56,20 @@ function LevelSelect({
 }
 
 const btn =
-  'rounded-lg border border-stone-300 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 transition hover:border-emerald-500 hover:text-emerald-600 active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-40 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200 dark:hover:border-emerald-500 dark:hover:text-emerald-400';
+  'rounded-lg border border-stone-300 bg-white px-3 py-1.5 text-xs font-bold text-stone-700 transition hover:border-[#81b64c] hover:text-[#5d8c30] active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-40 dark:border-white/10 dark:bg-[#1f1e1b] dark:text-[#d5d4d0] dark:hover:border-[#81b64c] dark:hover:text-[#95c95e]';
 
 export function Controls(props: ControlsProps) {
   const [fenInput, setFenInput] = useState('');
   const [fenError, setFenError] = useState<string | null>(null);
 
   return (
-    <div className="space-y-3.5 rounded-xl border border-stone-200/90 bg-white/85 p-3.5 dark:border-slate-800 dark:bg-slate-900/60">
+    <div className="space-y-3.5">
       {/* Mode Selector */}
       <div>
-        <div className="mb-1.5 text-[10px] font-bold uppercase tracking-wider text-slate-400 dark:text-slate-500">
+        <div className="mb-1.5 text-[10px] font-bold uppercase tracking-wider text-stone-400 dark:text-[#9e9c98]">
           Workbench Mode
         </div>
-        <div className="grid grid-cols-3 gap-1 rounded-lg bg-stone-100 p-1 dark:bg-slate-800/90">
+        <div className="grid grid-cols-3 gap-1 rounded-lg bg-stone-100 p-1 dark:bg-[#1c1b19]">
           {(
             [
               ['hve', 'Human vs Bot'],
@@ -80,10 +80,10 @@ export function Controls(props: ControlsProps) {
             <button
               key={m}
               type="button"
-              className={`rounded-md px-2 py-1.5 text-xs font-bold transition ${
+              className={`rounded-md px-2 py-1.5 text-xs font-extrabold transition ${
                 props.mode === m
-                  ? 'bg-white text-emerald-700 shadow-xs dark:bg-slate-900 dark:text-emerald-400'
-                  : 'text-slate-500 hover:text-slate-800 dark:text-slate-400 dark:hover:text-slate-200'
+                  ? 'bg-[#81b64c] text-white shadow-xs'
+                  : 'text-stone-600 hover:text-stone-900 dark:text-[#a09e99] dark:hover:text-white'
               }`}
               onClick={() => props.onSwitchMode(m)}
             >
@@ -97,7 +97,7 @@ export function Controls(props: ControlsProps) {
       {props.mode === 'hve' && (
         <div className="space-y-2.5">
           <div>
-            <div className="mb-1 text-[10px] font-bold uppercase tracking-wider text-slate-400 dark:text-slate-500">
+            <div className="mb-1 text-[10px] font-bold uppercase tracking-wider text-stone-400 dark:text-[#9e9c98]">
               Your Pieces
             </div>
             <div className="grid grid-cols-3 gap-1.5">
@@ -107,7 +107,7 @@ export function Controls(props: ControlsProps) {
                   type="button"
                   className={`${btn} capitalize ${
                     props.playerSide === s
-                      ? '!border-emerald-500 !bg-emerald-500/10 !text-emerald-700 dark:!text-emerald-300'
+                      ? '!border-[#81b64c] !bg-[#81b64c]/15 !text-[#4c7824] dark:!text-[#b2e07c]'
                       : ''
                   }`}
                   onClick={() => props.onChooseSide(s)}
@@ -120,7 +120,7 @@ export function Controls(props: ControlsProps) {
 
           <LevelSelect
             side="Opponent"
-            accent="bg-emerald-500"
+            accent="bg-[#81b64c]"
             value={props.levels[props.playerSide === 'white' ? 'black' : 'white']}
             onChange={(l) =>
               props.onSetEngineLevel(props.playerSide === 'white' ? 'black' : 'white', l)
@@ -133,21 +133,21 @@ export function Controls(props: ControlsProps) {
         <div className="space-y-2">
           <LevelSelect
             side="White"
-            accent="bg-stone-300 ring-1 ring-stone-400"
+            accent="bg-stone-200 ring-1 ring-stone-400"
             value={props.levels.white}
             onChange={(l) => props.onSetEngineLevel('white', l)}
           />
           <LevelSelect
             side="Black"
-            accent="bg-slate-900 ring-1 ring-slate-600"
+            accent="bg-stone-900 ring-1 ring-stone-600"
             value={props.levels.black}
             onChange={(l) => props.onSetEngineLevel('black', l)}
           />
           <div className="flex items-center justify-between pt-1">
-            <label className="flex cursor-pointer items-center gap-1.5 text-xs font-medium text-slate-600 dark:text-slate-300">
+            <label className="flex cursor-pointer items-center gap-1.5 text-xs font-medium text-stone-600 dark:text-[#c4c2bd]">
               <input
                 type="checkbox"
-                className="h-3.5 w-3.5 accent-emerald-600"
+                className="h-3.5 w-3.5 accent-[#81b64c]"
                 checked={props.autoFlip}
                 onChange={(e) => props.onSetAutoFlip(e.target.checked)}
               />
@@ -158,7 +158,7 @@ export function Controls(props: ControlsProps) {
               className={`${btn} ${
                 props.eveRunning
                   ? '!border-amber-500/60 !text-amber-600 dark:!text-amber-400'
-                  : '!border-emerald-500/60 !text-emerald-600 dark:!text-emerald-400'
+                  : '!border-[#81b64c]/60 !text-[#5d8c30] dark:!text-[#95c95e]'
               }`}
               onClick={props.onToggleEve}
             >
@@ -170,8 +170,8 @@ export function Controls(props: ControlsProps) {
 
       {/* Board Surface Palette */}
       <div>
-        <div className="mb-1.5 text-[10px] font-bold uppercase tracking-wider text-slate-400 dark:text-slate-500">
-          Board Finish
+        <div className="mb-1.5 text-[10px] font-bold uppercase tracking-wider text-stone-400 dark:text-[#9e9c98]">
+          Board Theme
         </div>
         <div className="grid grid-cols-2 gap-1.5">
           {(Object.keys(BOARD_PALETTES) as BoardTheme[]).map((key) => {
@@ -182,10 +182,10 @@ export function Controls(props: ControlsProps) {
                 key={key}
                 type="button"
                 onClick={() => props.onSetBoardTheme(key)}
-                className={`flex items-center gap-2 rounded-lg border px-2.5 py-1.5 text-xs font-semibold transition ${
+                className={`flex items-center gap-2 rounded-lg border px-2.5 py-1.5 text-xs font-bold transition ${
                   active
-                    ? 'border-emerald-500 bg-emerald-500/10 text-emerald-800 dark:text-emerald-300'
-                    : 'border-stone-200 bg-white text-slate-700 hover:border-stone-300 dark:border-slate-800 dark:bg-slate-800/50 dark:text-slate-300'
+                    ? 'border-[#81b64c] bg-[#81b64c]/15 text-[#4c7824] dark:text-[#b2e07c]'
+                    : 'border-stone-200 bg-white text-stone-700 hover:border-stone-300 dark:border-white/10 dark:bg-[#1f1e1b] dark:text-[#d5d4d0]'
                 }`}
               >
                 <span className="flex h-4 w-4 shrink-0 overflow-hidden rounded-xs ring-1 ring-black/15">
@@ -200,8 +200,8 @@ export function Controls(props: ControlsProps) {
       </div>
 
       {/* Custom FEN Loader */}
-      <div className="border-t border-stone-200/80 pt-3 dark:border-slate-800">
-        <div className="mb-1.5 text-[10px] font-bold uppercase tracking-wider text-slate-400 dark:text-slate-500">
+      <div className="border-t border-stone-200 pt-3 dark:border-white/10">
+        <div className="mb-1.5 text-[10px] font-bold uppercase tracking-wider text-stone-400 dark:text-[#9e9c98]">
           Load Custom FEN Position
         </div>
         <div className="flex gap-1.5">
@@ -213,7 +213,7 @@ export function Controls(props: ControlsProps) {
               if (fenError) setFenError(null);
             }}
             placeholder="Paste FEN string…"
-            className="min-w-0 flex-1 rounded-lg border border-stone-300 bg-white px-2.5 py-1.5 font-mono text-[11px] text-slate-800 placeholder:text-slate-400 focus:border-emerald-500 focus:outline-none dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
+            className="min-w-0 flex-1 rounded-lg border border-stone-300 bg-white px-2.5 py-1.5 font-mono text-[11px] text-stone-800 placeholder:text-stone-400 focus:border-[#81b64c] focus:outline-none dark:border-white/10 dark:bg-[#1f1e1b] dark:text-white"
           />
           <button
             type="button"

@@ -80,3 +80,6 @@ ctx.onmessage = (e: MessageEvent<WorkerRequest>) => {
     ctx.postMessage({ type: 'error', message: err instanceof Error ? err.message : String(err) });
   }
 };
+
+ctx.postMessage({ type: 'ready', fen: engine.fen() });
+

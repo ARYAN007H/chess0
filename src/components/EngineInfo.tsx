@@ -1,8 +1,10 @@
-import type { EnginePanelInfo, Side } from '../useChessGame';
+import type { CoachSuggestion, EnginePanelInfo, Side } from '../useChessGame';
 import type { MultiPvLine } from '../engine/search';
 
 interface EngineInfoProps {
   info: EnginePanelInfo;
+  coachSuggestions?: CoachSuggestion[];
+  isLearnMode?: boolean;
   thinkingSide: Side | null;
   stmSide: Side;
   canPlayMove: boolean;
@@ -38,13 +40,15 @@ function formatLineScore(
 }
 
 const RANK_ACCENTS: Record<number, { dot: string; label: string }> = {
-  1: { dot: 'bg-emerald-500', label: '#1 Best Pick' },
-  2: { dot: 'bg-sky-500', label: '#2 Candidate' },
-  3: { dot: 'bg-amber-500', label: '#3 Candidate' },
+  1: { dot: 'bg-[#81b64c]', label: 'Best Move' },
+  2: { dot: 'bg-sky-400', label: '2nd Choice' },
+  3: { dot: 'bg-amber-400', label: '3rd Idea' },
 };
 
 export function EngineInfo({
   info,
+  coachSuggestions = [],
+  isLearnMode = false,
   thinkingSide,
   stmSide,
   canPlayMove,
@@ -73,26 +77,25 @@ export function EngineInfo({
         : [];
 
   return (
-    <div className="space-y-3 rounded-xl border border-stone-200/90 bg-white/85 p-3.5 dark:border-slate-800 dark:bg-slate-900/60">
+    <div className="space-y-2.5 rounded-xl border border-stone-200/90 bg-stone-50/80 p-3 dark:border-white/10 dark:bg-[#1f1e1b]">
       {/* Header & Telemetry Bar */}
-      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-stone-200/80 pb-2.5 dark:border-slate-800">
+      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-stone-200/80 pb-2 dark:border-white/10">
         <div>
           <div className="flex items-center gap-2">
-            <h3 className="text-xs font-bold uppercase tracking-wider text-slate-800 dark:text-slate-200">
-              Chess0 v3 · 3-Line Multi-PV
+            <h3 className="text-[11px] font-extrabold tracking-wider text-stone-800 uppercase dark:text-[#f8f8f6]">
+              {isLearnMode ? 'Coach Move Suggestions (3 Lines)' : 'Chess0 v3 · 3-Line Multi-PV'}
             </h3>
-            { (thinkingSide !== null || info.thinking) && (
-              <span className="animate-thinking font-mono text-[11px] font-semibold text-emerald-600 dark:text-emerald-400">
-                searching…
+            {(thinkingSide !== null || info.thinking) && (
+              <span className="animate-thinking font-mono text-[10px] font-bold text-[#81b64c]">
+                calculating…
               </span>
             )}
           </div>
-          <p className="mt-0.5 font-mono text-[11px] tabular-nums text-slate-500 dark:text-slate-400">
+          <p className="mt-0.5 font-mono text-[10.5px] tabular-nums text-stone-500 dark:text-[#989795]">
             Depth {info.depth}
             {info.seldepth > info.depth ? `/${info.seldepth}` : ''} ·{' '}
-            {info.nodes > 0 ? `${fmtCount(info.nodes)} nodes` : '0 nodes'} ·{' '}
-            {info.nps > 0 ? `${fmtCount(info.nps)} n/s` : 'ready'}
-            {info.bookOpening ? ` · ${info.bookOpening}` : ''}
+            {info.nodes > 0 ? `${fmtCount(info.nodes)} nodes` : 'ready'}
+            {info.nps > 0 ? ` · ${fmtCount(info.nps)} n/s` : ''}
           </p>
         </div>
 
@@ -101,19 +104,19 @@ export function EngineInfo({
             type="button"
             onClick={() => onToggleArrows(!showMultiPvArrows)}
             title="Toggle 3-line candidate arrows on the board"
-            className={`rounded-lg border px-2 py-1 text-[11px] font-semibold transition ${
+            className={`rounded-md px-2 py-1 text-[10.5px] font-bold transition ${
               showMultiPvArrows
-                ? 'border-emerald-500/50 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300'
-                : 'border-stone-300 bg-transparent text-slate-500 hover:text-slate-800 dark:border-slate-700 dark:text-slate-400'
+                ? 'bg-[#81b64c]/20 text-[#629924] ring-1 ring-[#81b64c]/50 dark:text-[#a3d160]'
+                : 'bg-stone-200/80 text-stone-600 dark:bg-[#302e2b] dark:text-[#989795]'
             }`}
           >
-            3-Line Arrows
+            {showMultiPvArrows ? 'Arrows On' : 'Arrows Off'}
           </button>
           <button
             type="button"
             onClick={onAnalyzeDeeper}
             title="Run deep 3-line search on this position"
-            className="rounded-lg border border-stone-300 bg-white px-2.5 py-1 text-[11px] font-semibold text-slate-700 transition hover:border-emerald-500 hover:text-emerald-600 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200 dark:hover:border-emerald-500 dark:hover:text-emerald-400"
+            className="rounded-md bg-stone-200/80 px-2 py-1 text-[10.5px] font-bold text-stone-700 transition hover:bg-[#81b64c] hover:text-white dark:bg-[#302e2b] dark:text-[#bababa] dark:hover:bg-[#81b64c] dark:hover:text-white"
           >
             Deep Scan
           </button>
@@ -124,15 +127,16 @@ export function EngineInfo({
       <div className="space-y-1.5">
         {[1, 2, 3].map((rank) => {
           const line = lines.find((l) => l.rank === rank);
+          const coachSug = coachSuggestions.find((c) => c.rank === rank);
           const accent = RANK_ACCENTS[rank];
           if (!line) {
             return (
               <div
                 key={rank}
-                className="flex items-center justify-between rounded-lg border border-dashed border-stone-200/80 px-2.5 py-2 text-xs text-slate-400 dark:border-slate-800/80 dark:text-slate-600"
+                className="flex items-center justify-between rounded-lg border border-dashed border-stone-200/80 px-2.5 py-2 text-xs text-stone-400 dark:border-white/10 dark:text-[#7c7a77]"
               >
                 <span className="font-mono text-[11px]">Line #{rank}</span>
-                <span className="text-[11px]">Awaiting candidate line…</span>
+                <span className="text-[11px]">Evaluating candidate line…</span>
               </div>
             );
           }
@@ -145,45 +149,51 @@ export function EngineInfo({
               key={rank}
               className={`group rounded-lg border px-2.5 py-2 transition ${
                 isBest
-                  ? 'border-emerald-500/40 bg-emerald-500/[0.06] dark:border-emerald-500/35 dark:bg-emerald-500/[0.08]'
-                  : 'border-stone-200/80 bg-stone-50/70 dark:border-slate-800 dark:bg-slate-800/40'
+                  ? 'border-[#81b64c]/50 bg-[#81b64c]/10 dark:border-[#81b64c]/40 dark:bg-[#81b64c]/[0.12]'
+                  : 'border-stone-200/80 bg-white dark:border-white/5 dark:bg-[#262522]'
               }`}
             >
               <div className="flex items-center justify-between gap-2">
                 <div className="flex min-w-0 items-center gap-2">
                   <span className={`h-2 w-2 shrink-0 rounded-full ${accent.dot}`} />
+                  {line.san && (
+                    <span className="font-mono text-xs font-black text-stone-900 dark:text-white">
+                      {line.san}
+                    </span>
+                  )}
                   <span
-                    className={`font-mono text-xs font-bold tabular-nums ${
+                    className={`rounded px-1.5 py-0.5 font-mono text-[10.5px] font-bold tabular-nums ${
                       score.positive
-                        ? 'text-slate-900 dark:text-slate-100'
-                        : 'text-slate-600 dark:text-slate-300'
+                        ? 'bg-stone-200/80 text-stone-900 dark:bg-[#f8f8f6] dark:text-[#262522]'
+                        : 'bg-stone-800 text-white dark:bg-[#141412] dark:text-[#bababa]'
                     }`}
                   >
                     {score.text}
                   </span>
-                  <span className="text-[11px] font-semibold text-slate-500 dark:text-slate-400">
-                    · {accent.label}
+                  <span className="truncate text-[10.5px] font-bold text-stone-500 dark:text-[#989795]">
+                    {accent.label}
                   </span>
-                  {line.san && (
-                    <span className="font-mono text-xs font-bold text-emerald-700 dark:text-emerald-300">
-                      {line.san}
-                    </span>
-                  )}
                 </div>
 
                 {canPlayMove && line.uci && (
                   <button
                     type="button"
                     onClick={() => onPlayUciMove(line.uci)}
-                    className="shrink-0 rounded border border-stone-300 bg-white px-2 py-0.5 text-[10px] font-bold text-slate-700 opacity-85 transition hover:border-emerald-500 hover:text-emerald-600 group-hover:opacity-100 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 dark:hover:border-emerald-400"
+                    className="shrink-0 rounded-md bg-[#81b64c] px-2.5 py-1 text-[10.5px] font-extrabold text-white shadow-xs transition hover:bg-[#72a341]"
                   >
                     Play {line.san}
                   </button>
                 )}
               </div>
 
-              <div className="mt-1 truncate font-mono text-[11px] text-slate-600 dark:text-slate-400">
-                {line.pvSan.slice(0, 10).join(' ')}
+              {coachSug?.explanation && (
+                <p className="mt-1 text-[11px] leading-snug text-stone-600 dark:text-[#d4d4d0]">
+                  {coachSug.explanation}
+                </p>
+              )}
+
+              <div className="mt-1 truncate font-mono text-[10.5px] text-stone-400 dark:text-[#8b8986]">
+                Line: {line.pvSan.slice(0, 8).join(' ')}
               </div>
             </div>
           );
@@ -192,3 +202,5 @@ export function EngineInfo({
     </div>
   );
 }
+
+
