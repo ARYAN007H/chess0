@@ -17,6 +17,7 @@ import { probeBookV3 } from '../src/engine/bookV3';
 import { insufficientMaterial } from '../src/engine/eval';
 import { inCheckOf } from '../src/engine/movegen';
 import { evalV3Params, applyEvalParams, resetEvalParams } from '../src/engine/evalV3Params';
+import { evalV2Params, applyEvalV2Params, resetEvalV2Params } from '../src/engine/evalV2Params';
 import { clearEvalCaches } from '../src/engine/evalV3';
 import { readFileSync } from 'node:fs';
 
@@ -35,26 +36,28 @@ const MOVETIME = Math.max(50, arg('movetime', 250));
 const BOOK_PLIES = Math.max(0, arg('book-plies', 6));
 const MAX_PLIES = 300;
 
-type Variant = 'v2' | 'v3' | 'v3tuned' | 'v3base';
+type Variant = 'v2' | 'v3' | 'v3tuned' | 'v3base' | 'v2tuned' | 'v2base';
 const SIDE_A = argStr('a', 'v2') as Variant;
 const SIDE_B = argStr('b', 'v3') as Variant;
 
-// --- per-variant eval params (for v3tuned / v3base) -----------------------------
+// --- per-variant eval params (for the *tuned/*base variants) --------------------
 
-const PARAMS_FILE: Partial<Record<Variant, string>> = {
-  v3tuned: 'data/tuned-params.json',
-  v3base: 'data/params-current.json',
+const PARAMS_SPEC: Partial<Record<Variant, { file: string; kind: 'v3' | 'v2' }>> = {
+  v3tuned: { file: 'data/tuned-params.json', kind: 'v3' },
+  v3base: { file: 'data/params-current.json', kind: 'v3' },
+  v2tuned: { file: 'data/tuned-params-v2.json', kind: 'v2' },
+  v2base: { file: 'data/params-current-v2.json', kind: 'v2' },
 };
 
 const paramsCache = new Map<Variant, { scalars: Record<string, number>; tables: Record<string, number[]> } | null>();
 
 function applySideParams(side: Variant): void {
-  const file = PARAMS_FILE[side];
+  const spec = PARAMS_SPEC[side];
   if (!paramsCache.has(side)) {
     paramsCache.set(
       side,
-      file
-        ? (JSON.parse(readFileSync(file, 'utf8')) as {
+      spec
+        ? (JSON.parse(readFileSync(spec.file, 'utf8')) as {
             scalars: Record<string, number>;
             tables: Record<string, number[]>;
           })
@@ -62,16 +65,21 @@ function applySideParams(side: Variant): void {
     );
   }
   const raw = paramsCache.get(side);
-  if (raw) {
-    applyEvalParams(raw.scalars as Partial<Record<keyof typeof evalV3Params, number>>, raw.tables);
+  if (raw && spec) {
+    if (spec.kind === 'v3') {
+      applyEvalParams(raw.scalars as Partial<Record<keyof typeof evalV3Params, number>>, raw.tables);
+    } else {
+      applyEvalV2Params(raw.scalars as Partial<Record<keyof typeof evalV2Params, number>>, raw.tables);
+    }
   } else {
     resetEvalParams();
+    resetEvalV2Params();
   }
   clearEvalCaches();
 }
 
 function searchVariant(side: Variant): 'v2' | 'v3' {
-  return side === 'v2' ? 'v2' : 'v3';
+  return side === 'v2' || side === 'v2base' || side === 'v2tuned' ? 'v2' : 'v3';
 }
 
 interface Tally {
@@ -215,6 +223,8 @@ const tally: Record<Variant, Tally> = {
   v3: newTally(),
   v3tuned: newTally(),
   v3base: newTally(),
+  v2tuned: newTally(),
+  v2base: newTally(),
 };
 let games = 0;
 const t0 = Date.now();

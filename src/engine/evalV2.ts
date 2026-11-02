@@ -13,30 +13,9 @@ import { BISHOP, BLACK, KING, KNIGHT, PAWN, QUEEN, ROOK, WHITE } from './types';
 import type { Position } from './position';
 import { TOTAL_PHASE } from './psto';
 
-export const TEMPO = 12;
+import { evalV2Params as P, passedEgT2 as PASSED_EG, passedMgT2 as PASSED_MG } from './evalV2Params';
 
-// mg/eg value pairs (centipawns).
-const BISHOP_PAIR = [22, 45];
-const DOUBLED = [-12, -28];
-const ISOLATED = [-14, -10];
-/** Indexed by (relative) rank; ranks 0 and 7 are impossible for pawns. */
-const PASSED_MG = [0, 2, 6, 14, 28, 52, 90, 0];
-const PASSED_EG = [0, 8, 16, 32, 58, 92, 140, 0];
-const ROOK_OPEN = [30, 8];
-const ROOK_SEMI = [14, 4];
-const ROOK_7TH = [16, 24];
-/** Per counted move beyond the baseline expectation. */
-const MOBILITY_N = [4, 4];
-const MOBILITY_B = [4, 4];
-const MOBILITY_R = [2, 5];
-const MOBILITY_Q = [1, 2];
-const MOB_BASE_N = 4;
-const MOB_BASE_B = 6;
-const MOB_BASE_R = 7;
-const MOB_BASE_Q = 14;
-/** Pawn-shield per file around the king (midgame only). */
-const SHIELD_CLOSE = 12;
-const SHIELD_OPEN = -16;
+export const TEMPO = P.tempo;
 
 const KNIGHT_OFFSETS = [33, 31, 18, 14, -33, -31, -18, -14];
 const BISHOP_DIRS = [15, 17, -15, -17];
@@ -144,8 +123,8 @@ export function evalV2WhitePov(pos: Position): number {
 
     // Bishop pair.
     if ((color === WHITE ? bishopsWhite : bishopsBlack) >= 2) {
-      tmg += BISHOP_PAIR[0];
-      teg += BISHOP_PAIR[1];
+      tmg += P.bishopPairMg;
+      teg += P.bishopPairEg;
     }
 
     // Pawn structure per file.
@@ -153,14 +132,14 @@ export function evalV2WhitePov(pos: Position): number {
       const n = counts[f];
       if (n === 0) continue;
       if (n > 1) {
-        tmg += DOUBLED[0] * (n - 1);
-        teg += DOUBLED[1] * (n - 1);
+        tmg += P.doubledMg * (n - 1);
+        teg += P.doubledEg * (n - 1);
       }
       const left = f > 0 ? counts[f - 1] : 0;
       const right = f < 7 ? counts[f + 1] : 0;
       if (left === 0 && right === 0) {
-        tmg += ISOLATED[0] * n;
-        teg += ISOLATED[1] * n;
+        tmg += P.isolatedMg * n;
+        teg += P.isolatedEg * n;
       }
     }
 
@@ -202,35 +181,35 @@ export function evalV2WhitePov(pos: Position): number {
       if (type === ROOK) {
         if (counts[f] === 0) {
           if (enemyCounts[f] === 0) {
-            tmg += ROOK_OPEN[0];
-            teg += ROOK_OPEN[1];
+            tmg += P.rookOpenMg;
+            teg += P.rookOpenEg;
           } else {
-            tmg += ROOK_SEMI[0];
-            teg += ROOK_SEMI[1];
+            tmg += P.rookSemiMg;
+            teg += P.rookSemiEg;
           }
         }
         const seventh = color === WHITE ? r === 6 : r === 1;
         const enemyKingRank = pos.kingSq[them] >> 4;
         const enemyPawnRank = color === WHITE ? 6 : 1; // pawns trapped on their own seventh
         if (seventh && (enemyKingRank === (color === WHITE ? 7 : 0) || pawnRankCount[them][enemyPawnRank] > 0)) {
-          tmg += ROOK_7TH[0];
-          teg += ROOK_7TH[1];
+          tmg += P.rook7thMg;
+          teg += P.rook7thEg;
         }
       }
       // Mobility.
       const mob = mobilityOf(pos, sq, type);
       if (type === KNIGHT) {
-        tmg += MOBILITY_N[0] * (mob - MOB_BASE_N);
-        teg += MOBILITY_N[1] * (mob - MOB_BASE_N);
+        tmg += P.mobNMg * (mob - P.baseN);
+        teg += P.mobNEg * (mob - P.baseN);
       } else if (type === BISHOP) {
-        tmg += MOBILITY_B[0] * (mob - MOB_BASE_B);
-        teg += MOBILITY_B[1] * (mob - MOB_BASE_B);
+        tmg += P.mobBMg * (mob - P.baseB);
+        teg += P.mobBEg * (mob - P.baseB);
       } else if (type === ROOK) {
-        tmg += MOBILITY_R[0] * (mob - MOB_BASE_R);
-        teg += MOBILITY_R[1] * (mob - MOB_BASE_R);
+        tmg += P.mobRMg * (mob - P.baseR);
+        teg += P.mobREg * (mob - P.baseR);
       } else if (type === QUEEN) {
-        tmg += MOBILITY_Q[0] * (mob - MOB_BASE_Q);
-        teg += MOBILITY_Q[1] * (mob - MOB_BASE_Q);
+        tmg += P.mobQMg * (mob - P.baseQ);
+        teg += P.mobQEg * (mob - P.baseQ);
       }
     }
 
@@ -247,9 +226,9 @@ export function evalV2WhitePov(pos: Position): number {
         const far = ((kr + 2 * dir) << 4) | f;
         const pawn = color === WHITE ? PAWN : -PAWN;
         if (board[near] === pawn || board[far] === pawn) {
-          tmg += SHIELD_CLOSE;
+          tmg += P.shieldClose;
         } else if (counts[f] === 0) {
-          tmg += SHIELD_OPEN;
+          tmg += P.shieldOpen;
         }
         // A pawn on the file but not next to the king: no term.
       }

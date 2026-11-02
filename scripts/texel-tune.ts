@@ -14,6 +14,34 @@
 import { newStartPosition, parseFen } from '../src/engine/position';
 import { evalV3WhitePov, clearEvalCaches } from '../src/engine/evalV3';
 import { evalV3Params, TABLES, applyEvalParams, resetEvalParams, type EvalV3ParamsShape } from '../src/engine/evalV3Params';
+import { evalV2WhitePov } from '../src/engine/evalV2';
+import { evalV2Params, TABLES2, applyEvalV2Params, resetEvalV2Params, type EvalV2ParamsShape } from '../src/engine/evalV2Params';
+
+// Which eval to tune (v3 flagship by default). Abstracted so the descent loop
+// below is engine-agnostic.
+const EVAL = (() => {
+  const i = process.argv.indexOf('--eval');
+  const v = i >= 0 && process.argv[i + 1] ? process.argv[i + 1] : 'v3';
+  if (v !== 'v3' && v !== 'v2') throw new Error(`--eval must be v3|v2, got ${v}`);
+  return v;
+})();
+
+const evalPos = EVAL === 'v3' ? evalV3WhitePov : evalV2WhitePov;
+const paramsObj: Record<string, number> = EVAL === 'v3' ? evalV3Params : evalV2Params;
+const tablesMap: Record<string, Int16Array> = EVAL === 'v3' ? TABLES : TABLES2;
+type ParamsShape = typeof evalV3Params | typeof evalV2Params;
+
+function applyForEngine(
+  scalars?: Partial<Record<string, number>>,
+  tables?: Partial<Record<string, number[]>>,
+): void {
+  if (EVAL === 'v3') applyEvalParams(scalars as never, tables);
+  else applyEvalV2Params(scalars as never, tables);
+}
+function resetForEngine(): void {
+  if (EVAL === 'v3') resetEvalParams();
+  else resetEvalV2Params();
+}
 import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
 
@@ -32,15 +60,16 @@ const BASE = (() => {
   return i >= 0 && process.argv[i + 1] ? process.argv[i + 1] : null;
 })();
 const MAX_SWEEPS = arg('sweeps', 6);
+const OUT_PATH = EVAL === 'v3' ? 'data/tuned-params.json' : 'data/tuned-params-v2.json';
 
 if (BASE) {
   const raw = JSON.parse(readFileSync(BASE, 'utf8')) as {
     scalars: Record<string, number>;
     tables: Record<string, number[]>;
   };
-  applyEvalParams(raw.scalars as Partial<Record<keyof EvalV3ParamsShape, number>>, raw.tables);
-  clearEvalCaches();
-  console.log(`tuner: starting from champion params ${BASE}`);
+  applyForEngine(raw.scalars, raw.tables);
+  if (EVAL === 'v3') clearEvalCaches();
+  console.log(`tuner (${EVAL}): starting from champion params ${BASE}`);
 }
 
 // --- corpus ------------------------------------------------------------------
@@ -80,19 +109,19 @@ interface Tunable {
   max: number;
 }
 
-const SKIP_SCALARS = new Set<keyof EvalV3ParamsShape>([
+const SKIP_SCALARS = new Set([
   'tempo', 'ocbScale', 'mopupEdge', 'mopupClose', 'mopupMargin', 'mopupMaxPhase',
 ]);
 
 const tunables: Tunable[] = [];
-for (const k of Object.keys(evalV3Params) as (keyof EvalV3ParamsShape)[]) {
+for (const k of Object.keys(paramsObj)) {
   if (SKIP_SCALARS.has(k)) continue;
-  const def = (evalV3Params as Record<string, number>)[k];
+  const def = paramsObj[k];
   tunables.push({ kind: 'scalar', name: k, step0: 4, min: def - 64, max: def + 64 });
 }
-for (const tName of Object.keys(TABLES)) {
+for (const tName of Object.keys(tablesMap)) {
   for (let r = 1; r <= 6; r++) {
-    const def = TABLES[tName][r];
+    const def = tablesMap[tName][r];
     tunables.push({ kind: 'table', name: tName, index: r, step0: 4, min: def - 64, max: def + 64 });
   }
 }
@@ -103,7 +132,7 @@ console.log(`tunables: ${tunables.length}`);
 function lossOver(set: { pos: ReturnType<typeof newStartPosition>; wdl: number }[]): number {
   let sum = 0;
   for (const { pos, wdl } of set) {
-    const e = evalV3WhitePov(pos);
+    const e = evalPos(pos);
     // sigmoid(eval/400)
     const p = 1 / (1 + Math.pow(10, -e / 400));
     const d = p - wdl;
@@ -117,21 +146,21 @@ function trainLoss(): number {
 }
 
 function setScalar(name: string, v: number): void {
-  (evalV3Params as Record<string, number>)[name] = v;
+  paramsObj[name] = v;
 }
 function getScalar(name: string): number {
-  return (evalV3Params as Record<string, number>)[name];
+  return paramsObj[name];
 }
 function setTableValue(name: string, index: number, v: number): void {
-  TABLES[name][index] = v;
+  tablesMap[name][index] = v;
 }
 function getTableValue(name: string, index: number): number {
-  return TABLES[name][index];
+  return tablesMap[name][index];
 }
 
 let trials = 0;
 function candidateLoss(): number {
-  clearEvalCaches();
+  if (EVAL === 'v3') clearEvalCaches();
   trials++;
   return trainLoss();
 }
@@ -142,22 +171,22 @@ const startTrain = trainLoss();
 const startValid = lossOver(valid);
 console.log(`baseline: train MSE ${startTrain.toFixed(6)}  valid MSE ${startValid.toFixed(6)}`);
 
-resetEvalParams();
-clearEvalCaches();
+resetForEngine();
+if (EVAL === 'v3') clearEvalCaches();
 
 let best = trainLoss();
 const improvedKeys = new Set<string>();
 
 function snapshotParams(): { scalars: Record<string, number>; tables: Record<string, number[]> } {
   const scalars: Record<string, number> = {};
-  for (const k of Object.keys(evalV3Params)) scalars[k] = (evalV3Params as Record<string, number>)[k];
+  for (const k of Object.keys(paramsObj)) scalars[k] = paramsObj[k];
   const tables: Record<string, number[]> = {};
-  for (const k of Object.keys(TABLES)) tables[k] = Array.from(TABLES[k]);
+  for (const k of Object.keys(tablesMap)) tables[k] = Array.from(tablesMap[k]);
   return { scalars, tables };
 }
 function restoreParams(s: { scalars: Record<string, number>; tables: Record<string, number[]> }): void {
-  applyEvalParams(s.scalars as Partial<Record<keyof EvalV3ParamsShape, number>>, s.tables);
-  clearEvalCaches();
+  applyForEngine(s.scalars, s.tables);
+  if (EVAL === 'v3') clearEvalCaches();
 }
 
 // Early stopping on VALIDATION loss: keep the best-valid config, abort after
@@ -231,7 +260,7 @@ console.log(`improved params: ${improvedKeys.size} of ${tunables.length}`);
 
 {
   const sp = newStartPosition();
-  const e = evalV3WhitePov(sp);
+  const e = evalPos(sp);
   if (Math.abs(e) >= 60) console.warn(`WARNING: startpos eval ${e} outside ±60 (test npm test will fail)`);
   else console.log(`guard: startpos eval ${e} OK (±60)`);
 }
@@ -239,34 +268,36 @@ console.log(`improved params: ${improvedKeys.size} of ${tunables.length}`);
 // --- output --------------------------------------------------------------------------
 
 const scalarsOut: Record<string, number> = {};
-for (const k of Object.keys(evalV3Params)) scalarsOut[k] = (evalV3Params as Record<string, number>)[k];
+for (const k of Object.keys(paramsObj)) scalarsOut[k] = paramsObj[k];
 const tablesOut: Record<string, number[]> = {};
-for (const k of Object.keys(TABLES)) tablesOut[k] = Array.from(TABLES[k]);
+for (const k of Object.keys(tablesMap)) tablesOut[k] = Array.from(tablesMap[k]);
 
 mkdirSync('data', { recursive: true });
 writeFileSync(
-  'data/tuned-params.json',
-  JSON.stringify({ scalars: scalarsOut, tables: tablesOut }, null, 2) + '\n',
+  OUT_PATH,
+  JSON.stringify({ engine: EVAL, scalars: scalarsOut, tables: tablesOut }, null, 2) + '\n',
 );
-console.log('\nwrote data/tuned-params.json');
+console.log(`\nwrote ${OUT_PATH}`);
 
 // human-readable diff vs defaults
-resetEvalParams();
+resetForEngine();
+if (EVAL === 'v3') clearEvalCaches();
 console.log('\nparam changes (default -> tuned):');
-const tuned = JSON.parse(readFileSync('data/tuned-params.json', 'utf8')) as {
+const tuned = JSON.parse(readFileSync(OUT_PATH, 'utf8')) as {
   scalars: Record<string, number>;
   tables: Record<string, number[]>;
 };
 for (const [k, v] of Object.entries(tuned.scalars)) {
-  const d = (evalV3Params as Record<string, number>)[k];
-  if (d !== v) console.log(`  ${k}: ${d} -> ${v}`);
+  const d = paramsObj[k];
+  if (d !== undefined && d !== v) console.log(`  ${k}: ${d} -> ${v}`);
 }
 for (const [k, arr] of Object.entries(tuned.tables)) {
-  const def = TABLES[k];
+  const def = tablesMap[k];
+  if (!def || def.length !== arr.length) continue; // stale file from another engine
   const differs = arr.some((val, i) => def[i] !== val);
   if (differs) {
     console.log(`  ${k}: [${def.join(',')}] -> [${arr.join(',')}]`);
   }
 }
-resetEvalParams();
-clearEvalCaches();
+resetForEngine();
+if (EVAL === 'v3') clearEvalCaches();

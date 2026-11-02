@@ -4,3 +4,8 @@ dist
 .DS_Store
 frames
 data/tuned-params.json
+
+# tuning artifacts (big; kept in CI artifacts instead)
+data/tuning-corpus.txt
+data/artifacts/
+data/tuned-params-v2.json

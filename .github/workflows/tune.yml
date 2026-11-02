@@ -1,36 +1,47 @@
 name: Overnight Tuning
 
-# Champion/challenger self-improvement loop: generate a corpus with the current
-# champion, tune a challenger, and promote it only if it wins a real match.
-# Runs nightly; each job packs up to 3 improve-or-discard cycles (~5.5h of the
-# 6h limit). Acceptances are committed to data/params-current.json.
+# Champion/challenger self-improvement. One run = one improve-or-discard cycle:
+# 4 parallel VMs generate corpus shards with the CURRENT champion, then a
+# single job merges them, tunes a challenger, and promotes it only if it wins
+# a real played match. The v3 flagship gets 3 cycles/night (12k games); the v2
+# ladder level gets its own 12k-game session later in the night.
 
 on:
   schedule:
-    - cron: '30 20 * * *' # 02:00 IST nightly
+    - cron: '30 20 * * *' # 02:00 IST — v3 flagship cycle 1
+    - cron: '0 22 * * *' # 03:30 IST — v3 flagship cycle 2
+    - cron: '30 23 * * *' # 05:00 IST — v3 flagship cycle 3
+    - cron: '0 1 * * *' # 06:30 IST — v2 ladder session
   workflow_dispatch:
     inputs:
-      cycles:
-        description: 'Improve-or-discard cycles to run'
-        default: '3'
+      engine:
+        description: 'Engine to tune (v3 flagship | v2 ladder)'
+        default: 'v3'
       corpus-games:
-        description: 'Self-play games per corpus'
-        default: '3000'
+        description: 'Total self-play games for the corpus (split across 4 shards)'
+        default: '4000'
       match-pairs:
-        description: 'Paired games (x2) per acceptance gate'
+        description: 'Paired games (x2) for the acceptance gate'
         default: '20'
 
 permissions:
   contents: write
 
 concurrency:
-  group: tuning
+  group: tuning-${{ github.event.inputs.engine || 'v3' }}
   cancel-in-progress: false
 
 jobs:
-  session:
+  corpus:
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4]
     runs-on: ubuntu-latest
-    timeout-minutes: 350
+    timeout-minutes: 150
+    env:
+      ENGINE: ${{ github.event.inputs.engine || 'v3' }}
+      GAMES: ${{ github.event.inputs.corpus-games || '4000' }}
     steps:
       - uses: actions/checkout@v4
 
@@ -40,27 +51,81 @@ jobs:
 
       - run: bun install --frozen-lockfile
 
-      - name: Run tuning session
+      - name: Resolve champion file (seed if missing)
+        run: |
+          FILE=data/params-current.json
+          if [ "$ENGINE" = "v2" ]; then FILE=data/params-current-v2.json; fi
+          if [ ! -f "$FILE" ]; then
+            printf '{"note":"factory defaults","scalars":{},"tables":{}}\n' > "$FILE"
+          fi
+          echo "CHAMPION=$FILE" >> "$GITHUB_ENV"
+
+      - name: Generate corpus shard
+        run: |
+          npx tsx scripts/gen-corpus.ts \
+            --engine "$ENGINE" \
+            --games $((GAMES / 4)) \
+            --depth 5 \
+            --seed ${{ github.run_id }}0${{ matrix.shard }} \
+            --out "data/artifacts/corpus-shard-${{ matrix.shard }}.txt" \
+            --params "$CHAMPION"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: corpus-${{ github.run_id }}-${{ matrix.shard }}
+          path: data/artifacts/corpus-shard-${{ matrix.shard }}.txt
+          retention-days: 14
+
+  tune-gate:
+    needs: corpus
+    runs-on: ubuntu-latest
+    timeout-minutes: 150
+    env:
+      ENGINE: ${{ github.event.inputs.engine || 'v3' }}
+      MATCH_PAIRS: ${{ github.event.inputs.match-pairs || '20' }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - run: bun install --frozen-lockfile
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: data/artifacts/
+          pattern: corpus-${{ github.run_id }}-*
+          merge-multiple: true
+
+      - name: Merge corpus shards
+        run: |
+          cat data/artifacts/corpus-shard-*.txt > data/artifacts/corpus-merged.txt
+          wc -l data/artifacts/corpus-merged.txt
+
+      - name: Tune challenger and gate against champion
         run: |
           npx tsx scripts/tune-session.ts \
-            --cycles "${{ github.event.inputs.cycles || '3' }}" \
-            --corpus-games "${{ github.event.inputs.corpus-games || '3000' }}" \
-            --match-pairs "${{ github.event.inputs.match-pairs || '20' }}" \
-            --movetime 250 --sweeps 8
+            --engine "$ENGINE" \
+            --cycles 1 \
+            --corpus data/artifacts/corpus-merged.txt \
+            --match-pairs "$MATCH_PAIRS" \
+            --movetime 250 \
+            --sweeps 8
 
       - name: Push accepted champions
         run: |
           git config user.name "tuning-bot"
           git config user.email "actions@users.noreply.github.com"
+          git add data/ 2>/dev/null || true
           git pull --rebase origin main || true
           git push origin main || echo "nothing to push"
 
-      - name: Upload artifacts
+      - uses: actions/upload-artifact@v4
         if: always()
-        uses: actions/upload-artifact@v4
         with:
-          name: tuning-session-${{ github.run_id }}
+          name: session-${{ github.run_id }}
           path: |
             data/artifacts/
-            data/params-current.json
+            data/params-current*.json
           retention-days: 30

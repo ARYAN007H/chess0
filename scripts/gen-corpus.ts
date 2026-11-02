@@ -15,6 +15,7 @@ import { Engine } from '../src/engine/engine';
 import { legalMoves, inCheckOf } from '../src/engine/movegen';
 import { probeBookV3 } from '../src/engine/bookV3';
 import { searchPositionV3 } from '../src/engine/searchV3';
+import { searchPositionV2 } from '../src/engine/searchV2';
 import { moveToUci } from '../src/engine/types';
 import { mkdirSync, writeFileSync, readFileSync } from 'node:fs';
 import { dirname } from 'node:path';
@@ -37,20 +38,37 @@ const PARAMS = (() => {
 })();
 const MAX_PLIES = 160;
 const ADJUDICATE_CP = 350; // |eval| beyond this at the ply cap decides the game
+// Which engine plays the corpus games (v3 flagship by default; v2 tunes on its
+// own self-play so its eval fits v2-style positions).
+const ENGINE = (() => {
+  const i = process.argv.indexOf('--engine');
+  const v = i >= 0 && process.argv[i + 1] ? process.argv[i + 1] : 'v3';
+  if (v !== 'v3' && v !== 'v2') throw new Error(`--engine must be v3|v2, got ${v}`);
+  return v;
+})();
+const searchForCorpus = ENGINE === 'v3' ? searchPositionV3 : searchPositionV2;
 
 if (PARAMS) {
-  const { applyEvalParams, evalV3Params } = await import('../src/engine/evalV3Params');
-  const { clearEvalCaches } = await import('../src/engine/evalV3');
   const raw = JSON.parse(readFileSync(PARAMS, 'utf8')) as {
     scalars: Record<string, number>;
     tables: Record<string, number[]>;
   };
-  applyEvalParams(raw.scalars as Partial<Record<keyof typeof evalV3Params, number>>, raw.tables);
-  clearEvalCaches();
-  console.log(`corpus generator: playing with params from ${PARAMS}`);
+  if (ENGINE === 'v3') {
+    const { applyEvalParams, evalV3Params } = await import('../src/engine/evalV3Params');
+    const { clearEvalCaches } = await import('../src/engine/evalV3');
+    applyEvalParams(raw.scalars as Partial<Record<keyof typeof evalV3Params, number>>, raw.tables);
+    clearEvalCaches();
+  } else {
+    const { applyEvalV2Params, evalV2Params } = await import('../src/engine/evalV2Params');
+    applyEvalV2Params(raw.scalars as Partial<Record<keyof typeof evalV2Params, number>>, raw.tables);
+  }
+  console.log(`corpus generator (${ENGINE}): playing with params from ${PARAMS}`);
 }
 
-let seed = (Date.now() & 0x7fffffff) | 1;
+// Optional deterministic seed (--seed N): shard jobs must differ per shard but
+// be reproducible across the workflow (e.g. seed = runId * 10 + shard).
+const SEED = arg('seed', 0);
+let seed = SEED > 0 ? (SEED & 0x7fffffff) | 1 : (Date.now() & 0x7fffffff) | 1;
 const rnd = () => {
   seed ^= seed << 13; seed |= 0;
   seed ^= seed >>> 17;
@@ -117,7 +135,7 @@ function playGame(): Recorded[] {
       recorded.push({ fen: toFenLine(pos), wdl: -1 }); // wdl filled after the game
     }
 
-    const r = searchPositionV3(pos, { depth: DEPTH });
+    const r = searchForCorpus(pos, { depth: DEPTH });
     const eng = new Engine();
     eng.pos = pos;
     const m = eng.uciToMove(r.bestMoveUci);
@@ -127,7 +145,7 @@ function playGame(): Recorded[] {
 
   if (result === null) {
     // Adjudicate by eval sign at the cap (both sides played the same engine)
-    const e = searchPositionV3(pos, { depth: DEPTH }).scoreCp ?? 0;
+    const e = searchForCorpus(pos, { depth: DEPTH }).scoreCp ?? 0;
     const stmSign = pos.stm === 0 ? 1 : -1;
     const whiteCp = e * stmSign;
     result = whiteCp > ADJUDICATE_CP ? 1 : whiteCp < -ADJUDICATE_CP ? 0 : 0.5;

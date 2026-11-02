@@ -1,14 +1,15 @@
 /**
- * v3 determinism parity snapshot (run with `npx tsx scripts/parity.ts [--save|--check path]`).
+ * Engine determinism parity snapshot (run with `npx tsx scripts/parity.ts [--save|--check path]`).
  *
- * Runs fixed-depth v3 searches on standard positions and prints
- * `fenTag depth bestMoveUci score nodes`. Fixed-depth searches are fully
- * deterministic, so a pure speed refactor must reproduce every line exactly.
+ * Runs fixed-depth v3 AND v2 searches on standard positions and prints
+ * `engine tag depth bestMoveUci score nodes`. Fixed-depth searches are fully
+ * deterministic, so a pure speed/param refactor must reproduce every line.
  */
 
 import { newStartPosition, parseFen } from '../src/engine/position';
 import type { Position } from '../src/engine/position';
 import { searchPositionV3 } from '../src/engine/searchV3';
+import { searchPositionV2 } from '../src/engine/searchV2';
 
 const CASES: Array<[string, string, number]> = [
   ['startpos', 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1', 10],
@@ -29,7 +30,12 @@ const lines: string[] = [];
 for (const [tag, fen, depth] of CASES) {
   const r = searchPositionV3(load(fen), { depth });
   const score = r.scoreMate !== undefined ? `M${r.scoreMate}` : `${r.scoreCp}`;
-  lines.push(`${tag} d${depth} ${r.bestMoveUci} ${score} nodes=${r.nodes}`);
+  lines.push(`v3 ${tag} d${depth} ${r.bestMoveUci} ${score} nodes=${r.nodes}`);
+}
+for (const [tag, fen, depth] of CASES) {
+  const r = searchPositionV2(load(fen), { depth });
+  const score = r.scoreMate !== undefined ? `M${r.scoreMate}` : `${r.scoreCp}`;
+  lines.push(`v2 ${tag} d${depth} ${r.bestMoveUci} ${score} nodes=${r.nodes}`);
 }
 
 const out = lines.join('\n');
