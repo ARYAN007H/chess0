@@ -73,36 +73,118 @@ if (BASE) {
 }
 
 // --- corpus ------------------------------------------------------------------
+// Compact storage: a full Position drags ~120KB of history stacks, so a 12k-
+// game corpus (~1.16M positions) would need >140GB if kept as objects. We
+// parse each FEN once and keep only the fields evalV3/evalV2 read (~170B per
+// position, ~200MB total), restoring a single scratch Position per eval.
 
-const raw = readFileSync(CORPUS, 'utf8').trim().split('\n');
-const positions: { pos: ReturnType<typeof newStartPosition>; wdl: number }[] = [];
-for (const line of raw) {
+const MAX_POSITIONS = arg('max-positions', 400000); // subsample cap (seeded)
+const TIME_BUDGET_MIN = arg('time-budget', 90); // hard stop inside the job timeout
+
+const rawLines = readFileSync(CORPUS, 'utf8').trim().split('\n');
+// Seeded subsample when the corpus exceeds the cap.
+let lineIdx: number[] = rawLines.map((_, i) => i);
+if (rawLines.length > MAX_POSITIONS) {
+  let s = 0x2545f491;
+  const rnd = () => {
+    s ^= s << 13; s |= 0;
+    s ^= s >>> 17;
+    s ^= s << 5; s |= 0;
+    return (s >>> 0) / 4294967296;
+  };
+  for (let i = rawLines.length - 1; i > 0; i--) {
+    const j = Math.floor(rnd() * (i + 1));
+    [lineIdx[i], lineIdx[j]] = [lineIdx[j], lineIdx[i]];
+  }
+  lineIdx = lineIdx.slice(0, MAX_POSITIONS);
+}
+
+const N = lineIdx.length;
+const cBoard = new Int8Array(128 * N);
+const cStm = new Int8Array(N);
+const cMg = new Int32Array(N);
+const cEg = new Int32Array(N);
+const cPhase = new Int32Array(N);
+const cPawnHashLo = new Int32Array(N);
+const cPawnHashHi = new Int32Array(N);
+const cHashLo = new Int32Array(N);
+const cHashHi = new Int32Array(N);
+const cKingW = new Int32Array(N);
+const cKingB = new Int32Array(N);
+const cNpmW = new Int32Array(N);
+const cNpmB = new Int32Array(N);
+const cWdl = new Float64Array(N);
+
+const scratch = newStartPosition();
+let kept = 0;
+for (const li of lineIdx) {
+  const line = rawLines[li];
   const sp = line.lastIndexOf(' ');
-  const fen = line.slice(0, sp);
   const wdl = Number(line.slice(sp + 1));
   if (!Number.isFinite(wdl)) continue;
-  const pos = newStartPosition();
   try {
-    parseFen(pos, fen);
+    parseFen(scratch, line.slice(0, sp));
   } catch {
     continue;
   }
-  positions.push({ pos, wdl });
+  cBoard.set(scratch.board, kept * 128);
+  cStm[kept] = scratch.stm;
+  cMg[kept] = scratch.mg;
+  cEg[kept] = scratch.eg;
+  cPhase[kept] = scratch.phase;
+  cPawnHashLo[kept] = scratch.pawnHashLo;
+  cPawnHashHi[kept] = scratch.pawnHashHi;
+  cHashLo[kept] = scratch.hashLo;
+  cHashHi[kept] = scratch.hashHi;
+  cKingW[kept] = scratch.kingSq[0];
+  cKingB[kept] = scratch.kingSq[1];
+  cNpmW[kept] = scratch.npmCount[0];
+  cNpmB[kept] = scratch.npmCount[1];
+  cWdl[kept] = wdl;
+  kept++;
 }
-if (positions.length < 500) {
-  console.error(`corpus too small: ${positions.length} positions`);
+if (kept < 500) {
+  console.error(`corpus too small: ${kept} positions`);
   process.exit(1);
 }
-const split = Math.floor(positions.length * 0.8);
-const train = positions.slice(0, split);
-const valid = positions.slice(split);
-console.log(`corpus: ${positions.length} positions (train ${train.length}, valid ${valid.length})`);
+const split = Math.floor(kept * 0.8);
+console.log(`corpus: ${kept} positions (train ${split}, valid ${kept - split}), compact ~${((kept * 173) / 1e6).toFixed(0)}MB`);
+
+function restoreAt(i: number): void {
+  scratch.board.set(cBoard.subarray(i * 128, i * 128 + 128));
+  scratch.stm = cStm[i] as 0 | 1;
+  scratch.mg = cMg[i];
+  scratch.eg = cEg[i];
+  scratch.phase = cPhase[i];
+  scratch.pawnHashLo = cPawnHashLo[i];
+  scratch.pawnHashHi = cPawnHashHi[i];
+  scratch.hashLo = cHashLo[i];
+  scratch.hashHi = cHashHi[i];
+  scratch.kingSq[0] = cKingW[i];
+  scratch.kingSq[1] = cKingB[i];
+  scratch.npmCount[0] = cNpmW[i];
+  scratch.npmCount[1] = cNpmB[i];
+}
+
+function lossOver(from: number, to: number): number {
+  let sum = 0;
+  for (let i = from; i < to; i++) {
+    restoreAt(i);
+    const e = evalPos(scratch);
+    const p = 1 / (1 + Math.pow(10, -e / 400));
+    const d = p - cWdl[i];
+    sum += d * d;
+  }
+  return sum / (to - from);
+}
+
+
 
 // --- tunable inventory ---------------------------------------------------------
 
 interface Tunable {
   kind: 'scalar' | 'table';
-  name: string; // scalar key in evalV3Params, or table name
+  name: string; // scalar key in paramsObj, or table name
   index?: number; // table slot
   step0: number;
   min: number;
@@ -127,24 +209,6 @@ for (const tName of Object.keys(tablesMap)) {
 }
 console.log(`tunables: ${tunables.length}`);
 
-// --- loss ------------------------------------------------------------------------
-
-function lossOver(set: { pos: ReturnType<typeof newStartPosition>; wdl: number }[]): number {
-  let sum = 0;
-  for (const { pos, wdl } of set) {
-    const e = evalPos(pos);
-    // sigmoid(eval/400)
-    const p = 1 / (1 + Math.pow(10, -e / 400));
-    const d = p - wdl;
-    sum += d * d;
-  }
-  return sum / set.length;
-}
-
-function trainLoss(): number {
-  return lossOver(train);
-}
-
 function setScalar(name: string, v: number): void {
   paramsObj[name] = v;
 }
@@ -162,19 +226,19 @@ let trials = 0;
 function candidateLoss(): number {
   if (EVAL === 'v3') clearEvalCaches();
   trials++;
-  return trainLoss();
+  return lossOver(0, split);
 }
 
 // --- coordinate descent ------------------------------------------------------------
 
-const startTrain = trainLoss();
-const startValid = lossOver(valid);
+const startTrain = lossOver(0, split);
+const startValid = lossOver(split, kept);
 console.log(`baseline: train MSE ${startTrain.toFixed(6)}  valid MSE ${startValid.toFixed(6)}`);
 
 resetForEngine();
 if (EVAL === 'v3') clearEvalCaches();
 
-let best = trainLoss();
+let best = lossOver(0, split);
 const improvedKeys = new Set<string>();
 
 function snapshotParams(): { scalars: Record<string, number>; tables: Record<string, number[]> } {
@@ -191,13 +255,16 @@ function restoreParams(s: { scalars: Record<string, number>; tables: Record<stri
 
 // Early stopping on VALIDATION loss: keep the best-valid config, abort after
 // two consecutive sweeps that fail to improve it (train-only gains = overfit).
-let bestValid = lossOver(valid);
+let bestValid = lossOver(split, kept);
 let bestSnap = snapshotParams();
 let validStagnation = 0;
 
-for (let sweep = 0; sweep < MAX_SWEEPS; sweep++) {
+const budgetMs = TIME_BUDGET_MIN * 60_000;
+const t0 = Date.now();
+for (let sweep = 0; sweep < MAX_SWEEPS && Date.now() - t0 < budgetMs; sweep++) {
   let sweepImproved = 0;
   for (const t of tunables) {
+    if (Date.now() - t0 > budgetMs) { console.log('time budget reached — stopping sweep early'); break; }
     const key = t.kind === 'scalar' ? t.name : `${t.name}[${t.index}]`;
     const get = () => (t.kind === 'scalar' ? getScalar(t.name) : getTableValue(t.name, t.index!));
     const set = (v: number) => (t.kind === 'scalar' ? setScalar(t.name, v) : setTableValue(t.name, t.index!, v));
@@ -231,7 +298,7 @@ for (let sweep = 0; sweep < MAX_SWEEPS; sweep++) {
     if (anyImproved) sweepImproved++;
   }
 
-  const vLoss = lossOver(valid);
+  const vLoss = lossOver(split, kept);
   if (vLoss < bestValid - 1e-9) {
     bestValid = vLoss;
     bestSnap = snapshotParams();
@@ -251,8 +318,8 @@ for (let sweep = 0; sweep < MAX_SWEEPS; sweep++) {
 
 restoreParams(bestSnap);
 
-const endTrain = trainLoss();
-const endValid = lossOver(valid);
+const endTrain = lossOver(0, split);
+const endValid = lossOver(split, kept);
 console.log(`\nresult: train ${startTrain.toFixed(6)} -> ${endTrain.toFixed(6)}   valid ${startValid.toFixed(6)} -> ${endValid.toFixed(6)}`);
 console.log(`improved params: ${improvedKeys.size} of ${tunables.length}`);
 
