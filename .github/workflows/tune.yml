@@ -38,12 +38,12 @@ permissions:
   actions: write
 
 concurrency:
-  group: tuning-${{ github.event.inputs.engine || 'v3' }}
+  group: tuning-${{ github.event.inputs.engine || (github.event.schedule == '45 2 * * *' && 'v2' || 'v3') }}
   cancel-in-progress: false
 
 jobs:
   corpus:
-    if: ${{ (github.event.inputs.engine || 'v3') == 'v3' && vars.TUNING_V3_ENABLED != 'false' || (github.event.inputs.engine || 'v3') == 'v2' && vars.TUNING_V2_ENABLED != 'false' }}
+    if: ${{ (github.event.inputs.engine || (github.event.schedule == '45 2 * * *' && 'v2' || 'v3')) == 'v3' && vars.TUNING_V3_ENABLED != 'false' || (github.event.inputs.engine || (github.event.schedule == '45 2 * * *' && 'v2' || 'v3')) == 'v2' && vars.TUNING_V2_ENABLED != 'false' }}
     strategy:
       fail-fast: false
       matrix:
@@ -51,7 +51,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 150
     env:
-      ENGINE: ${{ github.event.inputs.engine || 'v3' }}
+      ENGINE: ${{ github.event.inputs.engine || (github.event.schedule == '45 2 * * *' && 'v2' || 'v3') }}
     steps:
       - uses: actions/checkout@v4
 
@@ -92,12 +92,12 @@ jobs:
           retention-days: 14
 
   tune-gate:
-    if: ${{ (github.event.inputs.engine || 'v3') == 'v3' && vars.TUNING_V3_ENABLED != 'false' || (github.event.inputs.engine || 'v3') == 'v2' && vars.TUNING_V2_ENABLED != 'false' }}
+    if: ${{ (github.event.inputs.engine || (github.event.schedule == '45 2 * * *' && 'v2' || 'v3')) == 'v3' && vars.TUNING_V3_ENABLED != 'false' || (github.event.inputs.engine || (github.event.schedule == '45 2 * * *' && 'v2' || 'v3')) == 'v2' && vars.TUNING_V2_ENABLED != 'false' }}
     needs: corpus
     runs-on: ubuntu-latest
     timeout-minutes: 150
     env:
-      ENGINE: ${{ github.event.inputs.engine || 'v3' }}
+      ENGINE: ${{ github.event.inputs.engine || (github.event.schedule == '45 2 * * *' && 'v2' || 'v3') }}
     steps:
       - uses: actions/checkout@v4
 
