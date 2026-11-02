@@ -107,6 +107,11 @@ jobs:
 
       - run: bun install --frozen-lockfile
 
+      - name: Configure git identity (tune-session commits champions)
+        run: |
+          git config user.name "tuning-bot"
+          git config user.email "actions@users.noreply.github.com"
+
       - uses: actions/download-artifact@v4
         with:
           path: data/artifacts/
@@ -130,11 +135,12 @@ jobs:
 
       - name: Push accepted champions
         run: |
-          git config user.name "tuning-bot"
-          git config user.email "actions@users.noreply.github.com"
-          git add data/ 2>/dev/null || true
+          git add data/params-current.json data/params-current-v2.json 2>/dev/null || true
+          if ! git diff --cached --quiet; then
+            git commit -m "tune: publish champion from session ${{ github.run_id }}"
+          fi
           git pull --rebase origin main || true
-          git push origin main || echo "nothing to push"
+          git push origin main || echo "push failed — champion kept in artifacts"
 
       - name: Chain next session (unless stopped)
         if: success()

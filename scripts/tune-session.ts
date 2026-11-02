@@ -117,6 +117,7 @@ for (let cycle = 1; cycle <= CYCLES; cycle++) {
         { encoding: 'utf8' },
       );
       if (c.status === 0) console.log(`committed new champion (${CHAMPION_FILE})`);
+      else console.error(`WARNING: champion commit failed (exit ${c.status}): ${(c.stderr || '').trim()} — champion file is updated on disk; the workflow push step will publish it`);
     } catch {
       /* local runs without git: keep going */
     }
