@@ -19,81 +19,19 @@
 import { BISHOP, BLACK, KING, KNIGHT, PAWN, QUEEN, ROOK, WHITE } from './types';
 import type { Position } from './position';
 import { TOTAL_PHASE } from './psto';
+import {
+  connectedEgT as CONNECTED_EG,
+  connectedMgT as CONNECTED_MG,
+  evalV3Params as P,
+  passedEgT as PASSED_EG,
+  passedFreeEgT as PASSED_FREE_EG,
+  passedFreeMgT as PASSED_FREE_MG,
+  passedMgT as PASSED_MG,
+  phalanxEgT as PHALANX_EG,
+  phalanxMgT as PHALANX_MG,
+} from './evalV3Params';
 
-export const TEMPO_V3 = 14;
-
-// Structural bonuses / penalties [mg, eg]
-const BISHOP_PAIR_MG = 28;
-const BISHOP_PAIR_EG = 54;
-
-const DOUBLED_MG = -11;
-const DOUBLED_EG = -26;
-const ISOLATED_MG = -15;
-const ISOLATED_EG = -14;
-const BACKWARD_MG = -12;
-const BACKWARD_EG = -10;
-
-// Connected & phalanx bonus by relative rank (0..7)
-const CONNECTED_MG = new Int16Array([0, 0, 5, 8, 14, 26, 48, 0]);
-const CONNECTED_EG = new Int16Array([0, 0, 4, 7, 12, 24, 42, 0]);
-const PHALANX_MG = new Int16Array([0, 0, 4, 7, 12, 22, 36, 0]);
-const PHALANX_EG = new Int16Array([0, 0, 3, 6, 10, 20, 32, 0]);
-
-// Passed pawns by relative rank (0..7)
-const PASSED_MG = new Int16Array([0, 4, 10, 20, 42, 78, 135, 0]);
-const PASSED_EG = new Int16Array([0, 12, 24, 46, 82, 138, 215, 0]);
-const PASSED_FREE_MG = new Int16Array([0, 2, 4, 8, 16, 30, 52, 0]);
-const PASSED_FREE_EG = new Int16Array([0, 6, 12, 22, 40, 68, 105, 0]);
-const PASSED_PROT_MG = 14;
-const PASSED_PROT_EG = 22;
-const ROOK_BEHIND_PASSER_MG = 16;
-const ROOK_BEHIND_PASSER_EG = 30;
-
-// Outposts
-const KNIGHT_OUTPOST_MG = 28;
-const KNIGHT_OUTPOST_EG = 18;
-const BISHOP_OUTPOST_MG = 18;
-const BISHOP_OUTPOST_EG = 12;
-
-// Rooks
-const ROOK_OPEN_MG = 32;
-const ROOK_OPEN_EG = 12;
-const ROOK_SEMI_MG = 16;
-const ROOK_SEMI_EG = 6;
-const ROOK_7TH_MG = 22;
-const ROOK_7TH_EG = 32;
-const ROOK_BATTERY_MG = 14;
-const ROOK_BATTERY_EG = 10;
-
-// Safe Mobility per square above baseline
-const MOB_N_MG = 5;
-const MOB_N_EG = 5;
-const MOB_B_MG = 5;
-const MOB_B_EG = 5;
-const MOB_R_MG = 3;
-const MOB_R_EG = 5;
-const MOB_Q_MG = 2;
-const MOB_Q_EG = 3;
-
-const BASE_N = 4;
-const BASE_B = 6;
-const BASE_R = 7;
-const BASE_Q = 13;
-
-// Threats
-const PAWN_THREAT_MINOR_MG = 36;
-const PAWN_THREAT_MINOR_EG = 28;
-const PAWN_THREAT_MAJOR_MG = 58;
-const PAWN_THREAT_MAJOR_EG = 42;
-const MINOR_THREAT_ROOK_MG = 30;
-const MINOR_THREAT_ROOK_EG = 22;
-const MINOR_THREAT_QUEEN_MG = 44;
-const MINOR_THREAT_QUEEN_EG = 32;
-
-// King safety
-const SHIELD_NEAR = 14;
-const SHIELD_FAR = 7;
-const SHIELD_OPEN_FILE = -20;
+export const TEMPO_V3 = P.tempo;
 
 const BISHOP_DIRS = new Int32Array([15, 17, -15, -17]);
 const ROOK_DIRS = new Int32Array([16, 1, -16, -1]);
@@ -397,14 +335,14 @@ export function evalV3WhitePov(pos: Position): number {
         const n = counts[f];
         if (n === 0) continue;
         if (n > 1) {
-          cmg += DOUBLED_MG * (n - 1);
-          ceg += DOUBLED_EG * (n - 1);
+          cmg += P.doubledMg * (n - 1);
+          ceg += P.doubledEg * (n - 1);
         }
         const left = f > 0 ? counts[f - 1] : 0;
         const right = f < 7 ? counts[f + 1] : 0;
         if (left === 0 && right === 0) {
-          cmg += ISOLATED_MG * n;
-          ceg += ISOLATED_EG * n;
+          cmg += P.isolatedMg * n;
+          ceg += P.isolatedEg * n;
         }
       }
 
@@ -443,8 +381,8 @@ export function evalV3WhitePov(pos: Position): number {
             }
             const stopSq = sq + (dir << 4);
             if (!behindSupport && !(stopSq & 0x88) && isBitSet(enemyAtkLo, enemyAtkHi, stopSq)) {
-              cmg += BACKWARD_MG;
-              ceg += BACKWARD_EG;
+              cmg += P.backwardMg;
+              ceg += P.backwardEg;
             }
           }
         }
@@ -486,8 +424,8 @@ export function evalV3WhitePov(pos: Position): number {
     // 1. Bishop pair
     const nBishops = color === WHITE ? bishopsWhite : bishopsBlack;
     if (nBishops >= 2) {
-      tmg += BISHOP_PAIR_MG;
-      teg += BISHOP_PAIR_EG;
+      tmg += P.bishopPairMg;
+      teg += P.bishopPairEg;
     }
 
     // 2. Passed pawns (dynamic interactions with board occupancy, rooks, and kings)
@@ -522,8 +460,8 @@ export function evalV3WhitePov(pos: Position): number {
           (f > 0 && board[sq - 1] === ownPawnPiece) ||
           (f < 7 && board[sq + 1] === ownPawnPiece);
         if (isDefended || hasPhalanx) {
-          tmg += PASSED_PROT_MG;
-          teg += PASSED_PROT_EG;
+          tmg += P.passedProtMg;
+          teg += P.passedProtEg;
         }
 
         const frontSq = sq + (dir << 4);
@@ -536,7 +474,7 @@ export function evalV3WhitePov(pos: Position): number {
             const wFactor = relRank - 2;
             const ourDist = kingDist(ourKingSq, frontSq);
             const enemyDist = kingDist(enemyKingSq, frontSq);
-            teg += (enemyDist * 5 - ourDist * 2) * wFactor;
+            teg += (enemyDist * P.passerKingEnemyW - ourDist * P.passerKingOurW) * wFactor;
           }
         }
 
@@ -546,7 +484,7 @@ export function evalV3WhitePov(pos: Position): number {
           const enemyKingToPromo = kingDist(enemyKingSq, promoSq) - (pos.stm === them ? 1 : 0);
           if (distToPromo < enemyKingToPromo) {
             if ((ourKingSq & 7) !== f || (color === WHITE ? (ourKingSq >> 4) < r : (ourKingSq >> 4) > r)) {
-              teg += 320 + relRank * 40;
+              teg += P.unstoppableBase + relRank * P.unstoppablePerRank;
             }
           }
         }
@@ -558,8 +496,8 @@ export function evalV3WhitePov(pos: Position): number {
             const bPiece = board[scanSq];
             if (bPiece !== 0) {
               if (bPiece === ownRook) {
-                tmg += ROOK_BEHIND_PASSER_MG;
-                teg += ROOK_BEHIND_PASSER_EG;
+                tmg += P.rookBehindPasserMg;
+                teg += P.rookBehindPasserEg;
               }
               break;
             }
@@ -586,11 +524,11 @@ export function evalV3WhitePov(pos: Position): number {
 
       if (isBitSet(enemyAtkLo, enemyAtkHi, sq)) {
         if (type === KNIGHT || type === BISHOP) {
-          tmg -= PAWN_THREAT_MINOR_MG;
-          teg -= PAWN_THREAT_MINOR_EG;
+          tmg -= P.pawnThreatMinorMg;
+          teg -= P.pawnThreatMinorEg;
         } else if (type === ROOK || type === QUEEN) {
-          tmg -= PAWN_THREAT_MAJOR_MG;
-          teg -= PAWN_THREAT_MAJOR_EG;
+          tmg -= P.pawnThreatMajorMg;
+          teg -= P.pawnThreatMajorEg;
         }
       }
 
@@ -607,11 +545,11 @@ export function evalV3WhitePov(pos: Position): number {
           if (!canBeDrivenAway) {
             const centerBonus = f >= 2 && f <= 5 ? 1 : 0;
             if (type === KNIGHT) {
-              tmg += KNIGHT_OUTPOST_MG + centerBonus * 8;
-              teg += KNIGHT_OUTPOST_EG + centerBonus * 4;
+              tmg += P.knightOutpostMg + centerBonus * P.knightOutpostCenterMg;
+              teg += P.knightOutpostEg + centerBonus * P.knightOutpostCenterEg;
             } else {
-              tmg += BISHOP_OUTPOST_MG + centerBonus * 6;
-              teg += BISHOP_OUTPOST_EG + centerBonus * 4;
+              tmg += P.bishopOutpostMg + centerBonus * P.bishopOutpostCenterMg;
+              teg += P.bishopOutpostEg + centerBonus * P.bishopOutpostCenterEg;
             }
           }
         }
@@ -620,27 +558,27 @@ export function evalV3WhitePov(pos: Position): number {
       if (type === ROOK) {
         if (counts[f] === 0) {
           if (enemyCounts[f] === 0) {
-            tmg += ROOK_OPEN_MG;
-            teg += ROOK_OPEN_EG;
+            tmg += P.rookOpenMg;
+            teg += P.rookOpenEg;
           } else {
-            tmg += ROOK_SEMI_MG;
-            teg += ROOK_SEMI_EG;
+            tmg += P.rookSemiMg;
+            teg += P.rookSemiEg;
           }
         }
         const seventh = color === WHITE ? r === 6 : r === 1;
         const enemyKingRank = enemyKingSq >> 4;
         const enemyPawnRank = color === WHITE ? 6 : 1;
         if (seventh && (enemyKingRank === (color === WHITE ? 7 : 0) || pawnRankCount[them][enemyPawnRank] > 0)) {
-          tmg += ROOK_7TH_MG;
-          teg += ROOK_7TH_EG;
+          tmg += P.rook7thMg;
+          teg += P.rook7thEg;
         }
         for (let j = i + 1; j < nPieces; j++) {
           const p2 = list[j];
           if ((p2 >> 8) === ROOK) {
             const sq2 = p2 & 0xff;
             if ((sq2 & 7) === f || (seventh && (sq2 >> 4) === r)) {
-              tmg += ROOK_BATTERY_MG;
-              teg += ROOK_BATTERY_EG;
+              tmg += P.rookBatteryMg;
+              teg += P.rookBatteryEg;
             }
           }
         }
@@ -655,49 +593,49 @@ export function evalV3WhitePov(pos: Position): number {
 
       if (threats > 0) {
         if (threats & 1) {
-          tmg += MINOR_THREAT_ROOK_MG;
-          teg += MINOR_THREAT_ROOK_EG;
+          tmg += P.minorThreatRookMg;
+          teg += P.minorThreatRookEg;
         }
         if (threats >= 2) {
-          tmg += MINOR_THREAT_QUEEN_MG;
-          teg += MINOR_THREAT_QUEEN_EG;
+          tmg += P.minorThreatQueenMg;
+          teg += P.minorThreatQueenEg;
         }
       }
 
       if (type === KNIGHT) {
-        tmg += MOB_N_MG * (mob - BASE_N);
-        teg += MOB_N_EG * (mob - BASE_N);
+        tmg += P.mobNMg * (mob - P.baseN);
+        teg += P.mobNEg * (mob - P.baseN);
         if (kingHits > 0) {
           kingAttackersCount++;
-          kingAttackWeight += 20 + kingHits * 8;
+          kingAttackWeight += P.kingAttackNBase + kingHits * P.kingAttackNPer;
         }
       } else if (type === BISHOP) {
-        tmg += MOB_B_MG * (mob - BASE_B);
-        teg += MOB_B_EG * (mob - BASE_B);
+        tmg += P.mobBMg * (mob - P.baseB);
+        teg += P.mobBEg * (mob - P.baseB);
         if (kingHits > 0) {
           kingAttackersCount++;
-          kingAttackWeight += 20 + kingHits * 8;
+          kingAttackWeight += P.kingAttackBBase + kingHits * P.kingAttackBPer;
         }
       } else if (type === ROOK) {
-        tmg += MOB_R_MG * (mob - BASE_R);
-        teg += MOB_R_EG * (mob - BASE_R);
+        tmg += P.mobRMg * (mob - P.baseR);
+        teg += P.mobREg * (mob - P.baseR);
         if (kingHits > 0) {
           kingAttackersCount++;
-          kingAttackWeight += 36 + kingHits * 10;
+          kingAttackWeight += P.kingAttackRBase + kingHits * P.kingAttackRPer;
         }
       } else if (type === QUEEN) {
-        tmg += MOB_Q_MG * (mob - BASE_Q);
-        teg += MOB_Q_EG * (mob - BASE_Q);
+        tmg += P.mobQMg * (mob - P.baseQ);
+        teg += P.mobQEg * (mob - P.baseQ);
         if (kingHits > 0) {
           kingAttackersCount++;
-          kingAttackWeight += 65 + kingHits * 12;
+          kingAttackWeight += P.kingAttackQBase + kingHits * P.kingAttackQPer;
         }
       }
     }
 
     if (kingAttackersCount >= 2 && (hasQueen || kingAttackersCount >= 3)) {
       const danger = (kingAttackWeight * kingAttackersCount) >> 2;
-      tmg += danger > 350 ? 350 : danger;
+      tmg += danger > P.kingDangerCap ? P.kingDangerCap : danger;
     }
 
     // 4. Own King Pawn Shield (midgame)
@@ -710,12 +648,12 @@ export function evalV3WhitePov(pos: Position): number {
         const near = ((kr + dir) << 4) | f;
         const far = ((kr + 2 * dir) << 4) | f;
         if (!(near & 0x88) && board[near] === ownPawnPiece) {
-          tmg += SHIELD_NEAR;
+          tmg += P.shieldNear;
         } else if (!(far & 0x88) && board[far] === ownPawnPiece) {
-          tmg += SHIELD_FAR;
+          tmg += P.shieldFar;
         } else if (counts[f] === 0) {
-          tmg += SHIELD_OPEN_FILE;
-          if (enemyCounts[f] === 0) tmg -= 10;
+          tmg += P.shieldOpenFile;
+          if (enemyCounts[f] === 0) tmg += P.shieldOpenExtra;
         }
       }
     }
@@ -737,24 +675,24 @@ export function evalV3WhitePov(pos: Position): number {
     const wLight = (((whiteBishopSq >> 4) + whiteBishopSq) & 1) === 1;
     const bLight = (((blackBishopSq >> 4) + blackBishopSq) & 1) === 1;
     if (wLight !== bLight) {
-      score = (score * 3) >> 2;
+      score = (score * P.ocbScale) >> 2;
     }
   }
 
-  if (phase <= 6) {
-    if (score >= 250 && pos.npmCount[BLACK] === 0) {
+  if (phase <= P.mopupMaxPhase) {
+    if (score >= P.mopupMargin && pos.npmCount[BLACK] === 0) {
       const bkSq = pos.kingSq[BLACK];
       const wkSq = pos.kingSq[WHITE];
       const bk64 = ((bkSq >> 4) << 3) | (bkSq & 7);
-      const edgeBonus = CENTER_DIST[bk64] * 14;
-      const closeBonus = (14 - manhattanDist(wkSq, bkSq)) * 6;
+      const edgeBonus = CENTER_DIST[bk64] * P.mopupEdge;
+      const closeBonus = (14 - manhattanDist(wkSq, bkSq)) * P.mopupClose;
       score += edgeBonus + closeBonus;
-    } else if (score <= -250 && pos.npmCount[WHITE] === 0) {
+    } else if (score <= -P.mopupMargin && pos.npmCount[WHITE] === 0) {
       const wkSq = pos.kingSq[WHITE];
       const bkSq = pos.kingSq[BLACK];
       const wk64 = ((wkSq >> 4) << 3) | (wkSq & 7);
-      const edgeBonus = CENTER_DIST[wk64] * 14;
-      const closeBonus = (14 - manhattanDist(bkSq, wkSq)) * 6;
+      const edgeBonus = CENTER_DIST[wk64] * P.mopupEdge;
+      const closeBonus = (14 - manhattanDist(bkSq, wkSq)) * P.mopupClose;
       score -= edgeBonus + closeBonus;
     }
   }
@@ -763,6 +701,12 @@ export function evalV3WhitePov(pos: Position): number {
   EVAL_CACHE_HI[eIdx] = keyHi ^ genSalt;
   EVAL_CACHE_SCORE[eIdx] = score;
   return score;
+}
+
+/** Clears the eval cache and pawn TT — required after any eval-param change. */
+export function clearEvalCaches(): void {
+  evalCacheGen++;
+  PAWN_TT_VALID.fill(0);
 }
 
 /** Side-to-move-relative score in centipawns, tempo included. */

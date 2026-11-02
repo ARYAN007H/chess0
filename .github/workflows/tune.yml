@@ -1,0 +1,66 @@
+name: Overnight Tuning
+
+# Champion/challenger self-improvement loop: generate a corpus with the current
+# champion, tune a challenger, and promote it only if it wins a real match.
+# Runs nightly; each job packs up to 3 improve-or-discard cycles (~5.5h of the
+# 6h limit). Acceptances are committed to data/params-current.json.
+
+on:
+  schedule:
+    - cron: '30 20 * * *' # 02:00 IST nightly
+  workflow_dispatch:
+    inputs:
+      cycles:
+        description: 'Improve-or-discard cycles to run'
+        default: '3'
+      corpus-games:
+        description: 'Self-play games per corpus'
+        default: '3000'
+      match-pairs:
+        description: 'Paired games (x2) per acceptance gate'
+        default: '20'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: tuning
+  cancel-in-progress: false
+
+jobs:
+  session:
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - run: bun install --frozen-lockfile
+
+      - name: Run tuning session
+        run: |
+          npx tsx scripts/tune-session.ts \
+            --cycles "${{ github.event.inputs.cycles || '3' }}" \
+            --corpus-games "${{ github.event.inputs.corpus-games || '3000' }}" \
+            --match-pairs "${{ github.event.inputs.match-pairs || '20' }}" \
+            --movetime 250 --sweeps 8
+
+      - name: Push accepted champions
+        run: |
+          git config user.name "tuning-bot"
+          git config user.email "actions@users.noreply.github.com"
+          git pull --rebase origin main || true
+          git push origin main || echo "nothing to push"
+
+      - name: Upload artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: tuning-session-${{ github.run_id }}
+          path: |
+            data/artifacts/
+            data/params-current.json
+          retention-days: 30
