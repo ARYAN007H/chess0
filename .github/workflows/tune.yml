@@ -1,31 +1,41 @@
-name: Overnight Tuning
+name: Continuous Tuning
 
-# Champion/challenger self-improvement. One run = one improve-or-discard cycle:
-# 4 parallel VMs generate corpus shards with the CURRENT champion, then a
-# single job merges them, tunes a challenger, and promotes it only if it wins
-# a real played match. The v3 flagship gets 3 cycles/night (12k games); the v2
-# ladder level gets its own 12k-game session later in the night.
+# Champion/challenger self-improvement, run CONTINUOUSLY: one workflow run =
+# one improve-or-discard cycle (4 parallel VMs generate corpus shards with the
+# CURRENT champion; one job merges, tunes a challenger, gates it vs the
+# champion in a real match, and promotes it only on a win).
+#
+# Sessions CHAIN: a successful cycle dispatches the next cycle for the same
+# engine with the same inputs, so tuning runs session-after-session until you
+# set the stop flag:
+#
+#   gh variable set TUNING_V3_ENABLED --body false   # stop v3 after current session
+#   gh variable set TUNING_V2_ENABLED --body false   # stop v2 after current session
+#
+# (Settings -> Secrets and variables -> Actions -> Variables in the web UI.)
+# The stop flag is checked at session start, so the in-flight session finishes
+# naturally and nothing new starts. Crons are infrequent self-heal backstops
+# for the case where a chained dispatch is missed (failures do not chain).
 
 on:
   schedule:
-    - cron: '30 20 * * *' # 02:00 IST — v3 flagship cycle 1
-    - cron: '0 22 * * *' # 03:30 IST — v3 flagship cycle 2
-    - cron: '30 23 * * *' # 05:00 IST — v3 flagship cycle 3
-    - cron: '0 1 * * *' # 06:30 IST — v2 ladder session
+    - cron: '15 */3 * * *' # v3 self-heal backstop (chain normally self-dispatches)
+    - cron: '45 2 * * *' # v2 self-heal backstop
   workflow_dispatch:
     inputs:
       engine:
         description: 'Engine to tune (v3 flagship | v2 ladder)'
         default: 'v3'
       corpus-games:
-        description: 'Total self-play games for the corpus (split across 4 shards)'
-        default: '4000'
+        description: 'Total self-play games per cycle (4 shards); empty = engine default (v3 4000 / v2 12000)'
+        default: ''
       match-pairs:
         description: 'Paired games (x2) for the acceptance gate'
         default: '20'
 
 permissions:
   contents: write
+  actions: write
 
 concurrency:
   group: tuning-${{ github.event.inputs.engine || 'v3' }}
@@ -33,6 +43,7 @@ concurrency:
 
 jobs:
   corpus:
+    if: ${{ (github.event.inputs.engine || 'v3') == 'v3' && vars.TUNING_V3_ENABLED != 'false' || (github.event.inputs.engine || 'v3') == 'v2' && vars.TUNING_V2_ENABLED != 'false' }}
     strategy:
       fail-fast: false
       matrix:
@@ -41,7 +52,6 @@ jobs:
     timeout-minutes: 150
     env:
       ENGINE: ${{ github.event.inputs.engine || 'v3' }}
-      GAMES: ${{ github.event.inputs.corpus-games || '4000' }}
     steps:
       - uses: actions/checkout@v4
 
@@ -51,8 +61,13 @@ jobs:
 
       - run: bun install --frozen-lockfile
 
-      - name: Resolve champion file (seed if missing)
+      - name: Resolve corpus size, champion file (seed if missing)
         run: |
+          GAMES="${{ github.event.inputs.corpus-games }}"
+          if [ -z "$GAMES" ]; then
+            if [ "$ENGINE" = "v2" ]; then GAMES=12000; else GAMES=4000; fi
+          fi
+          echo "GAMES=$GAMES" >> "$GITHUB_ENV"
           FILE=data/params-current.json
           if [ "$ENGINE" = "v2" ]; then FILE=data/params-current-v2.json; fi
           if [ ! -f "$FILE" ]; then
@@ -77,12 +92,12 @@ jobs:
           retention-days: 14
 
   tune-gate:
+    if: ${{ (github.event.inputs.engine || 'v3') == 'v3' && vars.TUNING_V3_ENABLED != 'false' || (github.event.inputs.engine || 'v3') == 'v2' && vars.TUNING_V2_ENABLED != 'false' }}
     needs: corpus
     runs-on: ubuntu-latest
     timeout-minutes: 150
     env:
       ENGINE: ${{ github.event.inputs.engine || 'v3' }}
-      MATCH_PAIRS: ${{ github.event.inputs.match-pairs || '20' }}
     steps:
       - uses: actions/checkout@v4
 
@@ -109,7 +124,7 @@ jobs:
             --engine "$ENGINE" \
             --cycles 1 \
             --corpus data/artifacts/corpus-merged.txt \
-            --match-pairs "$MATCH_PAIRS" \
+            --match-pairs "${{ github.event.inputs.match-pairs || '20' }}" \
             --movetime 250 \
             --sweeps 8
 
@@ -120,6 +135,28 @@ jobs:
           git add data/ 2>/dev/null || true
           git pull --rebase origin main || true
           git push origin main || echo "nothing to push"
+
+      - name: Chain next session (unless stopped)
+        if: success()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if [ "$ENGINE" = "v2" ] && [ "${{ vars.TUNING_V2_ENABLED }}" = "false" ]; then
+            echo "stop flag set — chaining halted after this session"; exit 0
+          fi
+          if [ "$ENGINE" = "v3" ] && [ "${{ vars.TUNING_V3_ENABLED }}" = "false" ]; then
+            echo "stop flag set — chaining halted after this session"; exit 0
+          fi
+          GAMES="${{ github.event.inputs.corpus-games }}"
+          if [ -z "$GAMES" ]; then
+            if [ "$ENGINE" = "v2" ]; then GAMES=12000; else GAMES=4000; fi
+          fi
+          gh workflow run tune.yml \
+            --ref main \
+            -f engine="$ENGINE" \
+            -f corpus-games="$GAMES" \
+            -f match-pairs="${{ github.event.inputs.match-pairs || '20' }}"
+          echo "chained next $ENGINE session (games=$GAMES)"
 
       - uses: actions/upload-artifact@v4
         if: always()
