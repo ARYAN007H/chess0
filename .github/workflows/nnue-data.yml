@@ -84,6 +84,7 @@ jobs:
               b = open(f, 'rb').read()
               assert b[:4] == b'NDD1', f
               n = int.from_bytes(b[4:8], 'little')
+              assert len(b) == 8 + n * 36, (f, len(b), 8 + n * 36)
               total += n
               blobs.append(b[8:8 + n * 36])
           out = b'NDD1' + total.to_bytes(4, 'little') + b''.join(blobs)

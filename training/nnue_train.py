@@ -37,6 +37,7 @@ Usage (Kaggle GPU or CPU):
 """
 
 import argparse
+import math
 import os
 
 import numpy as np
@@ -101,6 +102,16 @@ def load_data(path: str):
         maskA[s:e] = mA
         labels[s:e] = recs[:, 33:35].copy().view("<i2").reshape(e - s)
         results[s:e] = recs[:, 35]
+        if not np.isin(stm, (0, 1)).all():
+            bad = int(np.argmax(~np.isin(stm, (0, 1))))
+            raise SystemExit(f"{path}: invalid stm byte {int(stm[bad])} at record {s + bad}")
+        bad_code = (codes >= 12) & (codes != 15)
+        if bad_code.any():
+            r, c = np.argwhere(bad_code)[0]
+            raise SystemExit(f"{path}: invalid piece code {int(codes[r, c])} at record {s + r}")
+        if (results[s:e] > 2).any():
+            bad = int(np.argmax(results[s:e] > 2))
+            raise SystemExit(f"{path}: invalid result byte {int(results[s:e][bad])} at record {s + bad}")
         audit.add_batch((val_map[codes]).sum(axis=1), stm, labels[s:e])
     audit.final_check()
     return featA, featB, labels, results, maskA
@@ -193,6 +204,9 @@ def load_csv(path: str, max_positions: int = 0):
             try:
                 eval_white = float(ev_s)
             except ValueError:
+                skipped += 1
+                continue
+            if not math.isfinite(eval_white):
                 skipped += 1
                 continue
             codes, stm = fen_row_to_codes(row[fen_col].strip())
@@ -309,9 +323,9 @@ class PovAudit:
             f"(official Lichess DB calibrates at 68.5% overall, 2.2 pt gap)",
         ])
 
-    def fail_reason(self):
+    def fail_reason(self, min_rows: int = 1000):
         _, _, gap, ov, tot = self.rates()
-        if tot < 1000:
+        if tot < min_rows:
             return None
         if gap > self.GAP_ABORT:
             return (f"stm gap {gap:.1f} pts - white- and black-to-move rows disagree at "
@@ -347,18 +361,19 @@ class PovAudit:
 
 
 def _parse_parquet_file(job):
-    """Worker: decode one parquet file to scratch raw files (fork-safe, picks
-    up module state by fork). Returns (prefix, kept, audit fields...) for the
-    parent to merge. max_rows > 0 caps kept rows (canary mode)."""
-    path, prefix, min_depth, max_rows = job
-    import pyarrow.parquet as pq
+    """Worker: decode one parquet file to scratch raw files (spawn-safe).
+    Uses a dataset scanner so the depth/cp/mate filter is pushed down into
+    pyarrow (C++) and worker memory is bounded by batch_size, matching the
+    sequential loader's semantics. Returns (idx, prefix, kept, audit fields).
+    max_rows > 0 caps kept rows (canary mode)."""
+    idx, path, prefix, min_depth, max_rows = job
+    import pyarrow.dataset as pads
     audit = PovAudit()
-    CH = 100_000
     outs = {k: open(prefix + k + ".raw", "wb") for k in ("fa", "fb", "m", "l")}
-    cur_a = np.zeros((CH, 32), np.int16)
-    cur_b = np.zeros((CH, 32), np.int16)
-    cur_m = np.zeros((CH, 32), np.uint8)
-    cur_l = np.zeros(CH, np.float32)
+    cur_a = np.zeros((CHUNK_ROWS, 32), np.int16)
+    cur_b = np.zeros((CHUNK_ROWS, 32), np.int16)
+    cur_m = np.zeros((CHUNK_ROWS, 32), np.uint8)
+    cur_l = np.zeros(CHUNK_ROWS, np.float32)
     cur_n = kept = 0
 
     def flush():
@@ -371,16 +386,13 @@ def _parse_parquet_file(job):
         outs["l"].write(cur_l[:cur_n].tobytes())
         cur_n = 0
 
-    pf = pq.ParquetFile(path)
-    for rg in range(pf.num_row_groups):
-        tbl = pf.read_row_group(rg, columns=["fen", "cp", "depth", "mate"])
-        fens = tbl.column("fen").to_pylist()
-        cps = tbl.column("cp").to_pylist()
-        deps = tbl.column("depth").to_pylist()
-        mates = tbl.column("mate").to_pylist()
-        for fen, cp_white, depth, mate in zip(fens, cps, deps, mates):
-            if cp_white is None or mate is not None or depth is None or depth < min_depth:
-                continue
+    ds = pads.dataset(path, format="parquet")
+    filt = (pads.field("depth") >= min_depth) & (pads.field("cp").is_valid()) & (pads.field("mate").is_valid() == False)
+    scanner = ds.scanner(filter=filt, columns=["fen", "cp"], batch_size=65536)
+    for batch in scanner.to_batches():
+        fens = batch.column("fen").to_pylist()
+        cps = batch.column("cp").to_pylist()
+        for fen, cp_white in zip(fens, cps):
             codes, stm = fen_row_to_codes(fen)
             if codes is None:
                 continue
@@ -402,59 +414,98 @@ def _parse_parquet_file(job):
     flush()
     for f in outs.values():
         f.close()
-    return (prefix, kept, audit.aw, audit.tw, audit.ab, audit.tb,
+    return (idx, prefix, kept, audit.aw, audit.tw, audit.ab, audit.tb,
             audit.n_equal, audit.n_zero, audit.samples)
 
 
 CHUNK_ROWS = 100_000
 
 
-def _load_parquet_parallel(files, min_depth: int, workers: int):
-    """Full-dataset decode: canary audit on the first 2M rows (fail fast),
-    then one worker process per parquet file streaming to scratch files;
-    raw files concatenated on disk and returned as memmaps. RAM stays flat;
-    wall time ~= total_rows / (workers x single-thread rate)."""
+def _load_parquet_parallel(files, min_depth: int, workers: int, scratch_dir: str = ""):
+    """Full-dataset decode: a canary audits a bounded sample per the first
+    file with an explicit row floor (fail fast), then one spawn worker per
+    parquet file streams to scratch; audits merge incrementally as files land
+    (a poisoned file aborts the pool mid-decode). Worker raws are copied into
+    the final files and unlinked immediately — peak scratch ~= final size, not
+    2x — and sizes are asserted before memmap (a short write would SIGBUS).
+    The tmpdir survives on success: the returned memmaps map those files."""
     import shutil
     import tempfile
+    import time
     import multiprocessing as mp
-    tmpdir = tempfile.mkdtemp(prefix="nnue-parquet-")
+    tmpdir = tempfile.mkdtemp(prefix="nnue-parquet-", dir=scratch_dir or None)
+    t0 = time.time()
+    canary_prefix = tmpdir + "/canary-"
     print(f"parquet: canary audit (first 2M rows of {files[0].rsplit('/', 1)[-1]}) ...")
-    job = (files[0], tmpdir + "/canary-", min_depth, 2_000_000)
-    _, ckept, aw, tw, ab, tb, neq, nzero, samples = _parse_parquet_file(job)
+    _, _, ckept, aw, tw, ab, tb, neq, nzero, samples = _parse_parquet_file(
+        (-1, files[0], canary_prefix, min_depth, 2_000_000))
+    for key in ("fa", "fb", "m", "l"):
+        os.unlink(canary_prefix + key + ".raw")
     canary = PovAudit()
     canary.aw, canary.tw, canary.ab, canary.tb = aw, tw, ab, tb
     canary.n_equal, canary.n_zero, canary.samples = neq, nzero, samples
-    canary.fast_check()  # aborts before the pool spins up if labels are broken
     print(canary.report())
+    why = canary.fail_reason(min_rows=100_000)  # NOT fast_check: its 1.5M floor
+    if why:                                     # can exceed the canary's sample
+        raise SystemExit(f"POV AUDIT FAILED (canary): {why}; aborting before a wasted training run")
 
     n = len(files)
     w = max(1, min(workers, n))
     print(f"parquet: parallel decode of {n} files with {w} workers ...", flush=True)
-    jobs = [(f, f"{tmpdir}/w{i:03d}-", min_depth, 0) for i, f in enumerate(files)]
+    jobs = [(i, f, tmpdir + f"/w{i:03d}-", min_depth, 0) for i, f in enumerate(files)]
     # spawn, not fork: pyarrow runs internal thread pools, and forking a
     # process with live threadpool state crashes the children (measured).
     ctx = mp.get_context("spawn")
-    with ctx.Pool(w) as pool:
-        results = pool.map(_parse_parquet_file, jobs)
-
+    results = [None] * n
     merged = PovAudit()
     kept = 0
-    for r in results:
-        prefix, k, aw, tw, ab, tb, neq, nzero, samples = r
-        kept += k
-        part = PovAudit()
-        part.aw, part.tw, part.ab, part.tb = aw, tw, ab, tb
-        part.n_equal, part.n_zero, part.samples = neq, nzero, samples
-        merged.merge(part)
-    print(f"parquet: decoded {kept:,} positions from {n} files")
+    pool = ctx.Pool(w)
+    try:
+        for (idx, prefix, k, aw, tw, ab, tb, neq, nzero, samples) in pool.imap_unordered(_parse_parquet_file, jobs):
+            part = PovAudit()
+            part.aw, part.tw, part.ab, part.tb = aw, tw, ab, tb
+            part.n_equal, part.n_zero, part.samples = neq, nzero, samples
+            merged.merge(part)
+            kept += k
+            results[idx] = (prefix, k)
+            print(f"  [{len([x for x in results if x])}/{n}] {os.path.basename(files[idx])}: "
+                  f"{k:,} rows  ({time.time() - t0:.0f}s)", flush=True)
+            why = merged.fail_reason(min_rows=200_000)
+            if why:
+                raise SystemExit(f"POV AUDIT FAILED mid-decode: {why}")
+        pool.close()
+        pool.join()
+    except BaseException:
+        pool.terminate()
+        for r in results:
+            if r:
+                for key in ("fa", "fb", "m", "l"):
+                    try:
+                        os.unlink(r[0] + key + ".raw")
+                    except OSError:
+                        pass
+        raise
     if kept == 0:
         raise SystemExit("parquet: no positions matched the data filter")
     merged.final_check()
-    for key in ("fa", "fb", "m", "l"):
+
+    row_bytes = {"fa": 64, "fb": 64, "m": 32, "l": 4}
+    need = kept * sum(row_bytes.values())
+    free = shutil.disk_usage(tmpdir).free
+    if free < need * 1.05:
+        raise SystemExit(f"parquet: scratch too small for concatenated arrays "
+                         f"({need / 1e9:.1f}GB needed, {free / 1e9:.1f}GB free) - use --scratch-dir")
+    for key, rb in row_bytes.items():
         with open(tmpdir + f"/{key}.raw", "wb") as out:
-            for r in results:
-                with open(r[0] + key + ".raw", "rb") as src:
+            for prefix, k in results:  # file order: results is indexed by job idx
+                p = prefix + key + ".raw"
+                actual = os.path.getsize(p)
+                if actual != k * rb:
+                    raise SystemExit(f"parquet: short scratch write {p}: {actual} bytes, expected {k * rb}")
+                with open(p, "rb") as src:
                     shutil.copyfileobj(src, out, 1 << 22)
+                os.unlink(p)  # free each worker raw immediately: peak ~= final size
+    print(f"parquet: decoded {kept:,} positions from {n} files in {time.time() - t0:.0f}s")
     featA = np.memmap(tmpdir + "/fa.raw", dtype=np.int16, mode="c", shape=(kept, 32))
     featB = np.memmap(tmpdir + "/fb.raw", dtype=np.int16, mode="c", shape=(kept, 32))
     mask = np.memmap(tmpdir + "/m.raw", dtype=np.uint8, mode="c", shape=(kept, 32))
@@ -462,7 +513,7 @@ def _load_parquet_parallel(files, min_depth: int, workers: int):
     return featA, featB, labels, None, mask
 
 
-def load_parquet(pattern: str, max_positions: int = 0, min_depth: int = 15, workers: int = 0):
+def load_parquet(pattern: str, max_positions: int = 0, min_depth: int = 15, workers: int = 0, scratch_dir: str = ""):
     """Lichess evaluations dataset (dedup Parquet). Capped/subsampled runs use
     the proven sequential loader; uncapped multi-file runs (full-dataset
     pretrains) use the parallel decoder (one process per file, canary audit
@@ -474,16 +525,16 @@ def load_parquet(pattern: str, max_positions: int = 0, min_depth: int = 15, work
     if max_positions or workers == 1 or len(files) == 1:
         return _load_parquet_sequential(files, max_positions, min_depth)
     import multiprocessing as _mp
-    return _load_parquet_parallel(files, min_depth, workers or (_mp.cpu_count() or 1))
+    return _load_parquet_parallel(files, min_depth, workers or min(_mp.cpu_count() or 1, 8), scratch_dir)
 
 
-def _load_parquet_sequential(files, max_positions: int, min_depth: int):
+def _load_parquet_sequential(files, max_positions: int, min_depth: int, scratch_dir: str = ""):
     import tempfile
     import pyarrow.dataset as pads
     ds = pads.dataset(files, format="parquet")
 
     CHUNK = CHUNK_ROWS
-    tmpdir = tempfile.mkdtemp(prefix="nnue-parquet-")
+    tmpdir = tempfile.mkdtemp(prefix="nnue-parquet-", dir=scratch_dir or None)
     outs = {k: open(os.path.join(tmpdir, k + ".raw"), "wb")
             for k in ("fa", "fb", "m", "l")}
     cur_a = np.zeros((CHUNK, 32), np.int16)
@@ -600,23 +651,32 @@ def main():
     ap.add_argument("--h1", type=int, default=32, help="layer-1 width (TS reads H1 from the file header)")
     ap.add_argument("--h2", type=int, default=32, help="layer-2 width")
     ap.add_argument("--workers", type=int, default=0, help="parallel parquet decode workers (0 = auto, 1 = sequential)")
+    ap.add_argument("--scratch-dir", default="", help="directory for decode scratch files (default: system temp)")
+    ap.add_argument("--clip-grad", type=float, default=1.0, help="gradient L2 norm clip (0 = off)")
     ap.add_argument("--resume", default="",
                     help="float .pt state_dict to fine-tune from (default: random init)")
     args = ap.parse_args()
 
+    if args.workers < 0 or args.max_positions < 0 or args.min_depth < 1 or args.epochs < 0 or args.batch < 1:
+        raise SystemExit("invalid arguments: workers/max-positions/epochs must be >= 0, min-depth >= 1, batch >= 1")
     torch.manual_seed(args.seed)
     device = "cuda" if torch.cuda.is_available() else "cpu"
     print(f"device: {device}  net: 768x{args.h1}x2 -> {args.h2} -> 1")
 
-    if args.data.endswith(".csv"):
+    if "*" in args.data or os.path.isdir(args.data):
+        # globs/directories are parquet-only; a non-parquet glob fails inside
+        # load_parquet with "no parquet files match" (no silent .bin misroute)
+        featA, featB, labels, results, mask = load_parquet(
+            args.data, args.max_positions, args.min_depth, args.workers, args.scratch_dir)
+    elif args.data.endswith(".csv"):
         featA, featB, labels, results, mask = load_csv(args.data, args.max_positions)
     elif args.data.endswith(".bin"):
         featA, featB, labels, results, mask = load_data(args.data)
-    elif "*" in args.data or args.data.endswith(".parquet"):
+    elif args.data.endswith(".parquet"):
         featA, featB, labels, results, mask = load_parquet(
-            args.data, args.max_positions, args.min_depth, args.workers)
+            args.data, args.max_positions, args.min_depth, args.workers, args.scratch_dir)
     else:
-        raise SystemExit(f"--data must be .csv, .bin, .parquet or a glob (got {args.data})")
+        raise SystemExit(f"--data must be .csv, .bin or .parquet (got {args.data})")
     n = featA.shape[0]
     print(f"data: {n} positions")
 
@@ -648,6 +708,17 @@ def main():
         lr=args.lr)
     steps_per_epoch = max(1, trn_idx.numel() // args.batch)
     sched = torch.optim.lr_scheduler.CosineAnnealingLR(opt, T_max=args.epochs * steps_per_epoch, eta_min=1e-5)
+    best_val = float("inf")
+    best_epoch = 0
+    best_state = None
+
+    def save_ckpt(path):
+        d = os.path.dirname(path)
+        if d:
+            os.makedirs(d, exist_ok=True)
+        tmp = path + ".tmp"
+        torch.save(model.state_dict(), tmp)
+        os.replace(tmp, path)  # atomic: a crash mid-save can't corrupt the checkpoint
 
     def batch_to_device(b: torch.Tensor):
         return (fA[b].to(dev).long(), fB[b].to(dev).long(), msk[b].to(dev).float(), y[b])
@@ -674,38 +745,56 @@ def main():
     model.train()
     step = 0
     stop = False
+    SHUFFLE_BLOCK = 1 << 22  # 4M rows: a full-epoch int64 permutation costs 8B x N
+    nblocks = (trn_idx.numel() + SHUFFLE_BLOCK - 1) // SHUFFLE_BLOCK
     for epoch in range(args.epochs):
-        rp = trn_idx[torch.randperm(trn_idx.numel())]
         loss_sum = torch.zeros((), device=dev)  # GPU-side sum; .item() once per epoch
         nb = 0
-        for s in range(0, rp.numel() - args.batch + 1, args.batch):
-            b = rp[s:s + args.batch]
-            iA, iB, mk, yb = batch_to_device(b)
-            pred = model(iA, iB, mk)
-            tgt = torch.sigmoid(yb)
-            loss = F.mse_loss(torch.sigmoid(pred), tgt)
-            opt.zero_grad(set_to_none=True)
-            loss.backward()
-            opt.step()
-            sched.step()
-            step += 1
-            nb += 1
-            loss_sum += loss.detach()
-            if args.max_steps and step >= args.max_steps:
-                stop = True
+        for blk in torch.randperm(nblocks).tolist():
+            lo = blk * SHUFFLE_BLOCK
+            chunk = trn_idx[lo:min(lo + SHUFFLE_BLOCK, trn_idx.numel())]
+            rp = chunk[torch.randperm(chunk.numel())]
+            for s in range(0, rp.numel() - args.batch + 1, args.batch):
+                b = rp[s:s + args.batch]
+                iA, iB, mk, yb = batch_to_device(b)
+                pred = model(iA, iB, mk)
+                tgt = torch.sigmoid(yb)
+                loss = F.mse_loss(torch.sigmoid(pred), tgt)
+                opt.zero_grad(set_to_none=True)
+                loss.backward()
+                if args.clip_grad:
+                    torch.nn.utils.clip_grad_norm_(model.parameters(), args.clip_grad)
+                opt.step()
+                sched.step()
+                step += 1
+                nb += 1
+                loss_sum += loss.detach()
+                if args.max_steps and step >= args.max_steps:
+                    stop = True
+                    break
+            if stop:
                 break
         # Per-epoch validation + checkpoint: overfitting is visible in the log
         # and a crashed background run never loses more than one epoch.
-        torch.save(model.state_dict(), args.checkpoint)
+        val_e = eval_loss(val_idx)
+        if val_e < best_val:
+            best_val = val_e
+            best_epoch = epoch + 1
+            best_state = {k: v.detach().cpu().clone() for k, v in model.state_dict().items()}
+        save_ckpt(args.checkpoint)
         print(f"epoch {epoch + 1}/{args.epochs} step {step}: "
-              f"train {loss_sum.item() / max(nb, 1):.6f} valid {eval_loss(val_idx):.6f}")
+              f"train {loss_sum.item() / max(nb, 1):.6f} valid {val_e:.6f}")
         if stop:
             break
     print(f"final: train {eval_loss(trn_idx):.6f}  valid {eval_loss(val_idx):.6f}")
 
-    torch.save(model.state_dict(), args.checkpoint)
-    q = quantize_and_save(model, args.out)
-    print_reference_evals(q)
+    if best_state is not None and best_epoch != args.epochs:
+        print(f"quantizing the best-validation epoch ({best_epoch}, valid {best_val:.6f}) "
+              f"instead of the final epoch")
+        model.load_state_dict(best_state)
+    save_ckpt(args.checkpoint)
+    quantize_and_save(model, args.out)
+    print_reference_evals(args.out)  # round-trip: evals read back from the written .bin
 
 
 # ------------------------------------------------------------ quantize ----
@@ -719,6 +808,9 @@ def quantize_and_save(model: SmallNNUE, out: str):
     w2 = model.w2.detach().cpu().numpy().clip(-1.95, 1.95)
     w3 = model.w3.detach().cpu().numpy().clip(-1.95, 1.95)
 
+    for name, arr in (("w1", w1), ("b1", b1), ("w2", w2), ("w3", w3)):
+        if not np.isfinite(arr).all():
+            raise SystemExit(f"quantize: {name} contains NaN/Inf - training diverged; refusing to write a corrupt net")
     w1q = np.round(w1 * QA).astype("<i2")
     b1q = np.round(b1 * QA).astype("<i2")
     w2q = np.round(w2 * QB).astype(np.int8)
@@ -769,9 +861,37 @@ def nnue_forward_int(q, codes, stm):
     return -cp if stm == 1 else cp
 
 
-def print_reference_evals(q):
-    """Integer evals of the quantized net on the same FENs as
+def load_quantized_bin(path):
+    """Parse the written weight file back (round-trip) — a layout/offset bug
+    in the serializer cannot pass the reference evals unnoticed."""
+    raw = open(path, "rb").read()
+    if raw[:8] != b"C0NNUE01":
+        raise ValueError(f"{path}: bad magic")
+    h1 = int.from_bytes(raw[12:16], "little")
+    h2 = int.from_bytes(raw[16:20], "little")
+    qa = int.from_bytes(raw[20:22], "little", signed=True)
+    qb = int.from_bytes(raw[22:24], "little", signed=True)
+    scale = int.from_bytes(raw[24:26], "little", signed=True)
+    if (qa, qb, scale) != (QA, QB, SCALE) or not (1 <= h1 <= 8192 and 1 <= h2 <= 8192):
+        raise ValueError(f"{path}: bad header h1={h1} h2={h2} qa={qa} qb={qb} scale={scale}")
+    expected = 26 + 2 * IN * h1 * 2 + 2 * h1 * 2 + 2 * h1 * h2 + h2
+    if len(raw) != expected:
+        raise ValueError(f"{path}: size {len(raw)} != expected {expected} for h1={h1} h2={h2}")
+    off = 26
+    w1_fm = np.frombuffer(raw, "<i2", 2 * IN * h1, off).reshape(2, IN, h1)
+    off += 2 * IN * h1 * 2
+    b1q = np.frombuffer(raw, "<i2", 2 * h1, off).reshape(2, h1)
+    off += 2 * h1 * 2
+    w2q = np.frombuffer(raw, "i1", 2 * h1 * h2, off).reshape(2 * h1, h2)
+    off += 2 * h1 * h2
+    w3q = np.frombuffer(raw, "i1", h2, off)
+    return w1_fm, b1q, w2q, w3q
+
+
+def print_reference_evals(path):
+    """Integer evals of the SERIALIZED net on the same FENs as
     scripts/nnue-verify.ts — the two outputs must match line-for-line."""
+    q = load_quantized_bin(path)
     fens = [
         ("startpos", "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"),
         ("kiwipete", "r3k2r/p1ppqpb1/bn2pnp1/3PN3/1p2P3/2N2Q1p/PPPBBPPP/R3K2R w KQkq - 0 1"),

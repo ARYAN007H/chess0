@@ -19,7 +19,7 @@ Long-term goal: ~3000 Elo bot. Honest in-browser ceiling: ~2600-2900 measured.
 
 ## Phase 1 — NNUE v1 (code built; training after Phase 0 harvest)
 
-- **Architecture**: 768×16×2 → 32 → 1. STM-perspective piece-square features
+- **Architecture**: 768×32×2 → 32 → 1 (~51,330 params). STM-perspective piece-square features
   (12×64, sparse ~32 active), two accumulator views (own/opponent),
   int16/int8 quantized, **~25,700 params (~51KB)**.
 - **Data**: `scripts/gen-nnue-data.ts` — self-play positions labeled by

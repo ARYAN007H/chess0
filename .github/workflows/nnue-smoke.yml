@@ -42,11 +42,18 @@ jobs:
             --data data/artifacts/nnue-tiny.bin \
             --out data/artifacts/nnue-v1.bin \
             --checkpoint data/artifacts/nnue_float.pt \
-            --epochs 1 --batch 256 --max-steps 20
+            --epochs 1 --batch 256 --max-steps 20 | tee py_ref.txt
 
       - name: Verify quantized net loads in TS
         run: |
-          npx tsx scripts/nnue-verify.ts data/artifacts/nnue-v1.bin
+          npx tsx scripts/nnue-verify.ts data/artifacts/nnue-v1.bin | tee ts_ref.txt
+
+      - name: TS and Python reference evals must match line-for-line
+        run: |
+          grep '^eval ' py_ref.txt > py_evals.txt
+          grep '^eval ' ts_ref.txt | grep -v '^eval speed' > ts_evals.txt
+          diff py_evals.txt ts_evals.txt
+          echo "parity: $(wc -l < py_evals.txt) reference evals identical"
 
       - uses: actions/upload-artifact@v4
         with:

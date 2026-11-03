@@ -63,6 +63,13 @@ export function loadNnueWeights(bytes: Uint8Array): string {
   if (inp !== IN || qa !== QA || qb !== QB || scale !== SCALE) {
     throw new Error(`nnue: header mismatch (in=${inp} qa=${qa} qb=${qb} scale=${scale})`);
   }
+  if (h1 < 1 || h1 > 8192 || h2 < 1 || h2 > 8192) {
+    throw new Error(`nnue: implausible dims h1=${h1} h2=${h2}`);
+  }
+  const expected = 26 + 2 * h1 * IN * 2 + 2 * h1 * 2 + 2 * h1 * h2 + h2;
+  if (bytes.length !== expected) {
+    throw new Error(`nnue: file size ${bytes.length} != expected ${expected} for h1=${h1} h2=${h2}`);
+  }
   let off = 26;
   const w1Len = 2 * h1 * IN;
   const w1 = new Int16Array(w1Len);
@@ -115,8 +122,8 @@ function extractFeatures(pos: Position): number {
  * in searchV3 applies tempo the same way it does for evalV3).
  */
 export function evalNnueWhitePov(pos: Position): number {
-  const n = extractFeatures(pos);
   if (net === null) return 0;
+  const n = extractFeatures(pos);
   const { h1, h2, w1, b1, w2, w3 } = net;
 
   // Layer 1: two accumulators (int32-safe: 32 features × ≤31129).

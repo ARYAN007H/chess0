@@ -77,7 +77,7 @@ function sampleOpening(plies: number): string[] {
     if (candidates.length === 0) break;
     let total = 0;
     for (const c of candidates) total += c.weight;
-    let roll = Math.random() * total;
+    let roll = rnd() * total;  // seeded: same --seed must reproduce the corpus
     let picked = candidates[candidates.length - 1];
     for (const c of candidates) {
       roll -= c.weight;
