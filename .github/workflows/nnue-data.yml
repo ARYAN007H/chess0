@@ -1,0 +1,97 @@
+name: NNUE Data Factory
+
+# Generates NNUE training data: 4 parallel VMs play self-play games with the
+# tuned champion and label quiet positions with depth-6 search scores. The
+# merge job concatenates the shards and uploads one binary artifact — that
+# artifact is what you download and upload to Kaggle for training.
+
+on:
+  workflow_dispatch:
+    inputs:
+      games:
+        description: 'Total self-play games (split across 4 shards)'
+        default: '12000'
+      depth:
+        description: 'Search depth for labels (6 = good, higher = slower/better)'
+        default: '6'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: nnue-data
+  cancel-in-progress: false
+
+jobs:
+  corpus:
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4]
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - run: bun install --frozen-lockfile
+
+      - name: Resolve champion file (seed if missing)
+        run: |
+          FILE=data/params-current.json
+          if [ ! -f "$FILE" ]; then
+            printf '{"note":"factory defaults","scalars":{},"tables":{}}\n' > "$FILE"
+          fi
+
+      - name: Generate labeled positions
+        run: |
+          npx tsx scripts/gen-nnue-data.ts \
+            --games $(( ${{ github.event.inputs.games || '12000' }} / 4 )) \
+            --depth ${{ github.event.inputs.depth || '6' }} \
+            --seed ${{ github.run_id }}0${{ matrix.shard }} \
+            --params data/params-current.json \
+            --out "data/artifacts/nnue-shard-${{ matrix.shard }}.bin"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: nnue-shard-${{ github.run_id }}-${{ matrix.shard }}
+          path: data/artifacts/nnue-shard-${{ matrix.shard }}.bin
+          retention-days: 30
+
+  merge:
+    needs: corpus
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: shards/
+          pattern: nnue-shard-${{ github.run_id }}-*
+          merge-multiple: true
+
+      - name: Merge shards (binary concat, header count fixed)
+        run: |
+          python3 - << 'EOF'
+          import glob, struct
+          files = sorted(glob.glob('shards/nnue-shard-*.bin'))
+          total = 0
+          blobs = []
+          for f in files:
+              b = open(f, 'rb').read()
+              assert b[:4] == b'NDD1', f
+              n = int.from_bytes(b[4:8], 'little')
+              total += n
+              blobs.append(b[8:8 + n * 36])
+          out = b'NDD1' + total.to_bytes(4, 'little') + b''.join(blobs)
+          open('data/nnue-data-v1.bin', 'wb').write(out)
+          print(f'merged {len(files)} shards -> {total} positions, {len(out)/1e6:.1f}MB')
+          EOF
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: nnue-data-v1-${{ github.run_id }}
+          path: data/nnue-data-v1.bin
+          retention-days: 30

@@ -200,8 +200,18 @@ function analyzePiece(
   return safeMob | (kingHits << 8) | (threatBonus << 16);
 }
 
+// Optional eval override (NNUE): when set, evalV3WhitePov delegates to it.
+// The override bypasses the v3 eval cache entirely, so switching it on/off
+// cannot pollute cached v3 scores. Single-threaded sequential use only
+// (set before a search, clear after) — see scripts/match.ts `v3nnue`.
+let evalOverride: ((pos: Position) => number) | null = null;
+export function setEvalOverride(fn: ((pos: Position) => number) | null): void {
+  evalOverride = fn;
+}
+
 /** White-relative evaluation in centipawns (without tempo). */
 export function evalV3WhitePov(pos: Position): number {
+  if (evalOverride !== null) return evalOverride(pos);
   // Eval cache: keyed on the FULL position hash. The score is mostly
   // stm-independent, but the unstoppable-passer (rule-of-the-square) term
   // reads pos.stm, so the side to move MUST stay part of the key.

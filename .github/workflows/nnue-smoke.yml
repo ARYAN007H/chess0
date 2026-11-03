@@ -1,0 +1,55 @@
+name: NNUE Trainer Smoke
+
+# Proves the Python trainer + quantizer end-to-end on a real runner: tiny
+# labeled dataset → 1 short training run → quantized net. Dispatch manually
+# after changing training/nnue_train.py or the data format.
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - run: bun install --frozen-lockfile
+
+      - name: Install torch (CPU)
+        run: pip install torch --index-url https://download.pytorch.org/whl/cpu numpy
+
+      - name: Generate tiny labeled dataset
+        run: |
+          npx tsx scripts/gen-nnue-data.ts \
+            --games 8 --depth 4 --seed 424242 \
+            --out data/artifacts/nnue-tiny.bin
+
+      - name: Train briefly + quantize
+        run: |
+          python3 training/nnue_train.py \
+            --data data/artifacts/nnue-tiny.bin \
+            --out data/artifacts/nnue-v1.bin \
+            --checkpoint data/artifacts/nnue_float.pt \
+            --epochs 1 --max-steps 20
+
+      - name: Verify quantized net loads in TS
+        run: |
+          npx tsx scripts/nnue-verify.ts data/artifacts/nnue-v1.bin
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: nnue-smoke-${{ github.run_id }}
+          path: data/artifacts/
+          retention-days: 14

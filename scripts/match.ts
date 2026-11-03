@@ -18,6 +18,8 @@ import { insufficientMaterial } from '../src/engine/eval';
 import { inCheckOf } from '../src/engine/movegen';
 import { evalV3Params, applyEvalParams, resetEvalParams } from '../src/engine/evalV3Params';
 import { evalV2Params, applyEvalV2Params, resetEvalV2Params } from '../src/engine/evalV2Params';
+import { setEvalOverride } from '../src/engine/evalV3';
+import { loadNnueWeights, evalNnueWhitePov, clearNnue } from '../src/engine/nnue';
 import { clearEvalCaches } from '../src/engine/evalV3';
 import { readFileSync } from 'node:fs';
 
@@ -36,7 +38,7 @@ const MOVETIME = Math.max(50, arg('movetime', 250));
 const BOOK_PLIES = Math.max(0, arg('book-plies', 6));
 const MAX_PLIES = 300;
 
-type Variant = 'v2' | 'v3' | 'v3tuned' | 'v3base' | 'v2tuned' | 'v2base';
+type Variant = 'v2' | 'v3' | 'v3tuned' | 'v3base' | 'v2tuned' | 'v2base' | 'v3nnue';
 const SIDE_A = argStr('a', 'v2') as Variant;
 const SIDE_B = argStr('b', 'v3') as Variant;
 
@@ -49,9 +51,28 @@ const PARAMS_SPEC: Partial<Record<Variant, { file: string; kind: 'v3' | 'v2' }>>
   v2base: { file: 'data/params-current-v2.json', kind: 'v2' },
 };
 
+const NNUE_FILE = 'data/nnue-v1.bin';
+let nnueLoadedFor: Variant | null = null;
+
 const paramsCache = new Map<Variant, { scalars: Record<string, number>; tables: Record<string, number[]> } | null>();
 
 function applySideParams(side: Variant): void {
+  // NNUE eval override: v3 search (make/unmake, TT, ordering) with the net
+  // answering leaf evaluations. Mutually exclusive with v3 eval-params tweaks.
+  if (side === 'v3nnue') {
+    resetEvalParams();
+    resetEvalV2Params();
+    if (nnueLoadedFor !== side) {
+      clearNnue();
+      loadNnueWeights(readFileSync(NNUE_FILE));
+      nnueLoadedFor = side;
+      console.log(`loaded ${NNUE_FILE}`);
+    }
+    setEvalOverride(evalNnueWhitePov);
+    clearEvalCaches();
+    return;
+  }
+  setEvalOverride(null);
   const spec = PARAMS_SPEC[side];
   if (!paramsCache.has(side)) {
     paramsCache.set(
@@ -225,6 +246,7 @@ const tally: Record<Variant, Tally> = {
   v3base: newTally(),
   v2tuned: newTally(),
   v2base: newTally(),
+  v3nnue: newTally(),
 };
 let games = 0;
 const t0 = Date.now();
