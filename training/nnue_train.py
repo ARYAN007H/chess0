@@ -318,8 +318,11 @@ def load_parquet(pattern: str, max_positions: int = 0, min_depth: int = 15):
     """Lichess evaluations dataset (dedup Parquet): columns fen, depth,
     knodes, cp, mate. Filters depth >= min_depth, cp present, mate absent.
     Labels WHITE-POV cp -> STM POV (convention verified against the official
-    DB). Chunked compact storage (~196B/position)."""
+    DB). Streams decoded blocks to scratch files and returns copy-on-write
+    memmaps — RAM stays ~flat with N (in-RAM accumulation OOMs Kaggle's
+    ~13GB sessions past ~60M positions; this unlocks 100M-340M runs)."""
     import glob as _glob
+    import tempfile
     import pyarrow.dataset as pads
     files = sorted(_glob.glob(pattern, recursive=True))  # ** supported
     if not files:
@@ -327,7 +330,9 @@ def load_parquet(pattern: str, max_positions: int = 0, min_depth: int = 15):
     ds = pads.dataset(files, format="parquet")
 
     CHUNK = 100_000
-    blocks_a, blocks_b, blocks_m, blocks_l = [], [], [], []
+    tmpdir = tempfile.mkdtemp(prefix="nnue-parquet-")
+    outs = {k: open(os.path.join(tmpdir, k + ".raw"), "wb")
+            for k in ("fa", "fb", "m", "l")}
     cur_a = np.zeros((CHUNK, 32), np.int16)
     cur_b = np.zeros((CHUNK, 32), np.int16)
     cur_m = np.zeros((CHUNK, 32), np.uint8)
@@ -335,17 +340,13 @@ def load_parquet(pattern: str, max_positions: int = 0, min_depth: int = 15):
     cur_n = 0
 
     def flush():
-        nonlocal cur_a, cur_b, cur_m, cur_l, cur_n
+        nonlocal cur_n
         if cur_n == 0:
             return
-        blocks_a.append(cur_a[:cur_n].copy())
-        blocks_b.append(cur_b[:cur_n].copy())
-        blocks_m.append(cur_m[:cur_n].copy())
-        blocks_l.append(cur_l[:cur_n].copy())
-        cur_a = np.zeros((CHUNK, 32), np.int16)
-        cur_b = np.zeros((CHUNK, 32), np.int16)
-        cur_m = np.zeros((CHUNK, 32), np.uint8)
-        cur_l = np.zeros(CHUNK, np.float32)
+        outs["fa"].write(cur_a[:cur_n].tobytes())
+        outs["fb"].write(cur_b[:cur_n].tobytes())
+        outs["m"].write(cur_m[:cur_n].tobytes())
+        outs["l"].write(cur_l[:cur_n].tobytes())
         cur_n = 0
 
     audit = PovAudit()
@@ -383,20 +384,17 @@ def load_parquet(pattern: str, max_positions: int = 0, min_depth: int = 15):
             break
 
     flush()
+    for f in outs.values():
+        f.close()
     audit.fast_check()  # covers runs smaller than FAST_N
-    if not blocks_a:
+    if kept == 0:
         raise SystemExit("parquet: no positions matched the data filter")
-    # Concatenate one array at a time and free its blocks immediately —
-    # peak RAM ~1.25x the final data instead of ~2x (OOMs 13GB Kaggle
-    # sessions at the 50M-position scale otherwise).
-    featA = np.concatenate(blocks_a)
-    blocks_a.clear()
-    featB = np.concatenate(blocks_b)
-    blocks_b.clear()
-    mask = np.concatenate(blocks_m)  # uint8; cast to float per batch on GPU
-    blocks_m.clear()
-    labels = np.concatenate(blocks_l)
-    blocks_l.clear()
+    # mode "c" = copy-on-write: writable flag (no torch warning), pages cached,
+    # accidental writes never reach disk
+    featA = np.memmap(os.path.join(tmpdir, "fa.raw"), dtype=np.int16, mode="c", shape=(kept, 32))
+    featB = np.memmap(os.path.join(tmpdir, "fb.raw"), dtype=np.int16, mode="c", shape=(kept, 32))
+    mask = np.memmap(os.path.join(tmpdir, "m.raw"), dtype=np.uint8, mode="c", shape=(kept, 32))
+    labels = np.memmap(os.path.join(tmpdir, "l.raw"), dtype=np.float32, mode="c", shape=(kept,))
     print(f"parquet: kept {kept} positions (scanned {scanned}, skipped {skipped}) at depth >= {min_depth}")
     audit.final_check()
     return featA, featB, labels, None, mask
