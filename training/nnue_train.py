@@ -198,7 +198,7 @@ def load_parquet(pattern: str, max_positions: int = 0, min_depth: int = 15):
     Labels WHITE-POV cp -> STM POV. Chunked compact storage (~196B/position)."""
     import glob as _glob
     import pyarrow.dataset as pads
-    files = sorted(_glob.glob(pattern))
+    files = sorted(_glob.glob(pattern, recursive=True))  # ** supported
     if not files:
         raise ValueError(f"no parquet files match {pattern}")
     ds = pads.dataset(files, format="parquet")
