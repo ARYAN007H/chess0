@@ -73,6 +73,7 @@ def load_data(path: str):
     maskA = np.empty((count, 32), np.uint8)
     labels = np.empty(count, np.float32)
     results = np.empty(count, np.int64)
+    audit = PovAudit()
     sq = np.arange(64, dtype=np.int16)
     sq_flip = sq ^ 56
     for s in range(0, count, CH):
@@ -100,6 +101,8 @@ def load_data(path: str):
         maskA[s:e] = mA
         labels[s:e] = recs[:, 33:35].copy().view("<i2").reshape(e - s)
         results[s:e] = recs[:, 35]
+        audit.add_batch((val_map[codes]).sum(axis=1), stm, labels[s:e])
+    audit.final_check()
     return featA, featB, labels, results, maskA
 
 
@@ -259,6 +262,24 @@ class PovAudit:
             self.tb += 1
         if not ok and len(self.samples) < 12:
             self.samples.append((fen, int(cp_white), "w" if stm == 0 else "b", int(mat_diff)))
+
+    def add_batch(self, mat_diffs, stms, labels_arr):
+        """Vectorized add() for decoded .bin chunks (records carry no FEN)."""
+        mat = np.asarray(mat_diffs, dtype=np.int64)
+        lab = np.asarray(labels_arr, dtype=np.float32)
+        stms = np.asarray(stms)
+        self.n_equal += int((mat == 0).sum())
+        self.n_zero += int((lab == 0).sum())
+        comp = (mat != 0) & (lab != 0)
+        if not comp.any():
+            return
+        exp = np.where(stms == 0, mat, -mat)[comp]
+        ok = np.sign(lab[comp]) == np.sign(exp)
+        w = stms[comp] == 0
+        self.aw += int(ok[w].sum())
+        self.tw += int(w.sum())
+        self.ab += int(ok[~w].sum())
+        self.tb += int((~w).sum())
 
     def rates(self):
         rw = 100.0 * self.aw / self.tw if self.tw else 0.0
