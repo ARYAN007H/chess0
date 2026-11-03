@@ -446,6 +446,8 @@ def main():
     ap.add_argument("--max-positions", type=int, default=0, help="csv/parquet subsample cap (0 = all)")
     ap.add_argument("--min-depth", type=int, default=15, help="parquet label quality filter (lichess depth)")
     ap.add_argument("--seed", type=int, default=12345, help="torch seed (numpy split is already seeded)")
+    ap.add_argument("--resume", default="",
+                    help="float .pt state_dict to fine-tune from (default: random init)")
     args = ap.parse_args()
 
     torch.manual_seed(args.seed)
@@ -483,6 +485,9 @@ def main():
     msk = torch.from_numpy(mask)      # uint8 (N, 32) on CPU
 
     model = SmallNNUE().to(dev)
+    if args.resume:
+        model.load_state_dict(torch.load(args.resume, map_location=dev))
+        print(f"resumed weights from {args.resume} (fine-tune: use a low --lr)")
     opt = torch.optim.AdamW(
         [{"params": [model.w1, model.w2, model.w3], "weight_decay": args.weight_decay},
          {"params": [model.b1], "weight_decay": 0.0}],
