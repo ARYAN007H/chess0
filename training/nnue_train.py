@@ -195,9 +195,12 @@ class SmallNNUE(nn.Module):
         nn.init.normal_(self.w3, std=0.15)
 
     def forward(self, idxA: torch.Tensor, idxB: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:
-        # acc = Σ w1[feature] over active features; mask zeroes padding slots
-        accA = (self.w1[0][:, idxA] * mask).sum(dim=2) + self.b1[0]   # (B, h1)
-        accB = (self.w1[1][:, idxB] * mask).sum(dim=2) + self.b1[1]
+        # gather → (B, 64 slots, h1); mask (B,64,1) zeroes padding slots;
+        # sum over slots → (B, h1). w1[v] is (h1, IN) → .T is (IN, h1) so the
+        # first-dim gather yields slot-major (B, 64, h1).
+        m3 = mask.unsqueeze(-1)
+        accA = (self.w1[0].T[idxA] * m3).sum(dim=1) + self.b1[0]      # (B, h1)
+        accB = (self.w1[1].T[idxB] * m3).sum(dim=1) + self.b1[1]
         actA = accA.clamp(0.0, 1.0)
         actB = accB.clamp(0.0, 1.0)
         h = torch.cat([actA, actB], dim=1)                            # (B, 2*h1)
