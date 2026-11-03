@@ -10,3 +10,4 @@ data/tuning-corpus.txt
 data/artifacts/
 data/tuned-params-v2.json
 .zcode/
+__pycache__/

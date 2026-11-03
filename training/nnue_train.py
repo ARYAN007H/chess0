@@ -192,10 +192,103 @@ def load_csv(path: str, max_positions: int = 0):
     return featA, featB, labels, None, mask
 
 
+class PovAudit:
+    """Gate on the label perspective via sign agreement between the STM label
+    and the mover's material sign.
+
+    Calibrated on the official Lichess evaluations DB (white-POV, 407k-row
+    sample): 68.5% overall agreement, white- vs black-to-move rates within
+    2.2 pts. Absolute agreement on this distribution is LOW (fortress draws,
+    sacrifices, compensation) and is NOT evidence of a bug. A perspective bug
+    instead shows up as a huge white/black-to-move gap (~50 pts) with overall
+    near 50%; garbage labels sit at ~50% overall."""
+
+    GAP_ABORT = 8.0      # pts between white- and black-to-move rates
+    FLOOR_ABORT = 52.0   # overall %; coin-flip labels = 50%
+    FAST_N = 1_500_000   # early verdict once this many comparable rows seen
+
+    def __init__(self):
+        self.aw = self.tw = self.ab = self.tb = 0
+        self.n_equal = self.n_zero = 0
+        self.samples = []  # (fen, cp_white, stm, white-minus-black material)
+        self.fast_done = False
+
+    def add(self, fen, cp_white, stm, mat_diff, label_stm):
+        if mat_diff == 0:
+            self.n_equal += 1
+            return
+        if label_stm == 0:
+            self.n_zero += 1
+            return
+        ok = (label_stm > 0) == ((mat_diff if stm == 0 else -mat_diff) > 0)
+        if stm == 0:
+            self.aw += ok
+            self.tw += 1
+        else:
+            self.ab += ok
+            self.tb += 1
+        if not ok and len(self.samples) < 12:
+            self.samples.append((fen, int(cp_white), "w" if stm == 0 else "b", int(mat_diff)))
+
+    def rates(self):
+        rw = 100.0 * self.aw / self.tw if self.tw else 0.0
+        rb = 100.0 * self.ab / self.tb if self.tb else 0.0
+        tot = self.tw + self.tb
+        ov = 100.0 * (self.aw + self.ab) / tot if tot else 0.0
+        return rw, rb, abs(rw - rb), ov, tot
+
+    def report(self):
+        rw, rb, gap, ov, tot = self.rates()
+        return "\n".join([
+            f"POV audit: {ov:.1f}% overall | white-to-move {rw:.1f}% (n={self.tw:,}) | "
+            f"black-to-move {rb:.1f}% (n={self.tb:,}) | stm gap {gap:.1f} pts",
+            f"  excluded: {self.n_equal:,} equal-material, {self.n_zero:,} zero-label rows",
+            f"  healthy on this data: 55-75% overall, gap < {PovAudit.GAP_ABORT:.0f} pts "
+            f"(official Lichess DB calibrates at 68.5% overall, 2.2 pt gap)",
+        ])
+
+    def fail_reason(self):
+        _, _, gap, ov, tot = self.rates()
+        if tot < 1000:
+            return None
+        if gap > self.GAP_ABORT:
+            return (f"stm gap {gap:.1f} pts - white- and black-to-move rows disagree at "
+                    f"different rates, the label perspective conversion is broken")
+        if ov < self.FLOOR_ABORT:
+            return f"overall agreement {ov:.1f}% ~ coin flip - labels look unrelated to the position"
+        return None
+
+    def fast_check(self):
+        if self.fast_done:
+            return
+        _, _, _, _, tot = self.rates()
+        if tot < self.FAST_N:
+            return
+        self.fast_done = True
+        why = self.fail_reason()
+        print(self.report())
+        if why:
+            self.print_samples()
+            raise SystemExit(f"POV AUDIT FAILED (early, {tot:,} rows): {why}; aborting before a wasted training run")
+
+    def final_check(self):
+        print(self.report())
+        why = self.fail_reason()
+        if why:
+            self.print_samples()
+            raise SystemExit(f"POV AUDIT FAILED: {why}; aborting before a wasted training run")
+
+    def print_samples(self):
+        print("sample disagreements (fen | cp_white | stm | white-minus-black material):")
+        for fen, cp, stm, mat in self.samples:
+            print(f"  {fen} | {cp} | {stm} | {mat:+d}")
+
+
 def load_parquet(pattern: str, max_positions: int = 0, min_depth: int = 15):
     """Lichess evaluations dataset (dedup Parquet): columns fen, depth,
     knodes, cp, mate. Filters depth >= min_depth, cp present, mate absent.
-    Labels WHITE-POV cp -> STM POV. Chunked compact storage (~196B/position)."""
+    Labels WHITE-POV cp -> STM POV (convention verified against the official
+    DB). Chunked compact storage (~196B/position)."""
     import glob as _glob
     import pyarrow.dataset as pads
     files = sorted(_glob.glob(pattern, recursive=True))  # ** supported
@@ -204,30 +297,28 @@ def load_parquet(pattern: str, max_positions: int = 0, min_depth: int = 15):
     ds = pads.dataset(files, format="parquet")
 
     CHUNK = 100_000
-    blocks_a, blocks_b, blocks_m, blocks_l, blocks_s = [], [], [], [], []
+    blocks_a, blocks_b, blocks_m, blocks_l = [], [], [], []
     cur_a = np.zeros((CHUNK, 32), np.int16)
     cur_b = np.zeros((CHUNK, 32), np.int16)
     cur_m = np.zeros((CHUNK, 32), np.uint8)
     cur_l = np.zeros(CHUNK, np.float32)
-    cur_s = np.zeros(CHUNK, np.float32)
     cur_n = 0
 
     def flush():
-        nonlocal cur_a, cur_b, cur_m, cur_l, cur_s, cur_n
+        nonlocal cur_a, cur_b, cur_m, cur_l, cur_n
         if cur_n == 0:
             return
         blocks_a.append(cur_a[:cur_n].copy())
         blocks_b.append(cur_b[:cur_n].copy())
         blocks_m.append(cur_m[:cur_n].copy())
         blocks_l.append(cur_l[:cur_n].copy())
-        blocks_s.append(cur_s[:cur_n].copy())
         cur_a = np.zeros((CHUNK, 32), np.int16)
         cur_b = np.zeros((CHUNK, 32), np.int16)
         cur_m = np.zeros((CHUNK, 32), np.uint8)
         cur_l = np.zeros(CHUNK, np.float32)
-        cur_s = np.zeros(CHUNK, np.float32)
         cur_n = 0
 
+    audit = PovAudit()
     kept = skipped = scanned = 0
     filt = (pads.field("depth") >= min_depth) & (pads.field("cp").is_valid()) & (pads.field("mate").is_valid() == False)
     scanner = ds.scanner(filter=filt, columns=["fen", "cp"], batch_size=65536)
@@ -248,40 +339,27 @@ def load_parquet(pattern: str, max_positions: int = 0, min_depth: int = 15):
             cur_b[cur_n] = featB
             cur_m[cur_n] = maskA.astype(np.uint8)
             cur_l[cur_n] = label_stm
-            mat = float(np.sign((val_map[codes]).sum()))  # 0 = equal material, excluded
-            # expected label sign from STM POV: material sign flipped when black moves
-            cur_s[cur_n] = mat * (1.0 if stm == 0 else -1.0)
+            audit.add(fen, cp_white, stm, int((val_map[codes]).sum()), label_stm)
             cur_n += 1
             if cur_n >= CHUNK:
                 flush()
             kept += 1
             if kept % 1_000_000 == 0:
                 print(f"  parsed {kept} positions (scanned {scanned}, skipped {skipped})")
+                audit.fast_check()  # early verdict ~2M rows in
             if max_positions and kept >= max_positions:
                 break
         if max_positions and kept >= max_positions:
             break
 
     flush()
+    audit.fast_check()  # covers runs smaller than FAST_N
     featA = np.concatenate(blocks_a)
     featB = np.concatenate(blocks_b)
     mask = np.concatenate(blocks_m).astype(np.float32)
     labels = np.concatenate(blocks_l)
-
-    # POV sanity: label sign vs material sign (captured at parse time).
-    agree = total = 0
-    for blk_s, blk_l in zip(blocks_s, blocks_l):
-        mat_s = np.sign(blk_s)
-        lab_s = np.sign(blk_l)
-        nz = mat_s != 0
-        agree += int((mat_s[nz] == lab_s[nz]).sum())
-        total += int(nz.sum())
-    if total:
-        pct = 100 * agree / total
-        print(f"POV sanity: label sign agrees with expected sign on {pct:.1f}% of {total} positions (healthy 85-100%; ~50% = POV BUG)")
-        if total >= 1000 and pct < 70:
-            raise SystemExit("POV sanity FAILED - label perspective conversion is wrong; aborting before a wasted training run")
     print(f"parquet: kept {kept} positions (scanned {scanned}, skipped {skipped}) at depth >= {min_depth}")
+    audit.final_check()
     return featA, featB, labels, None, mask
 
 
