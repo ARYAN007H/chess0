@@ -233,7 +233,7 @@ def main():
     # shuffle + 2% validation split
     rng = np.random.default_rng(12345)
     perm = rng.permutation(n)
-    n_val = max(1000, int(n * 0.02))
+    n_val = max(1, min(int(n * 0.02), n - 1))  # 2% validation; never swallows tiny debug sets
     val_idx = torch.from_numpy(perm[:n_val])
     trn_idx = torch.from_numpy(perm[n_val:])
     dev = torch.device(device)
