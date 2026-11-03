@@ -42,7 +42,7 @@ jobs:
             --data data/artifacts/nnue-tiny.bin \
             --out data/artifacts/nnue-v1.bin \
             --checkpoint data/artifacts/nnue_float.pt \
-            --epochs 1 --max-steps 20
+            --epochs 1 --batch 256 --max-steps 20
 
       - name: Verify quantized net loads in TS
         run: |

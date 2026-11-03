@@ -179,6 +179,91 @@ def load_csv(path: str, max_positions: int = 0):
     return featA, featB, labels, None, mask
 
 
+
+def load_parquet(pattern: str, max_positions: int = 0, min_depth: int = 15):
+    """Load the Lichess evaluations dataset (dedup Parquet version) directly:
+    columns fen, depth, knodes, cp, mate. Filters: depth >= min_depth, cp
+    present, mate skipped. Labels are WHITE-POV cp -> converted to STM POV.
+    Streams row-groups via pyarrow; keeps int16 features (~196B/position)."""
+    import glob as _glob
+    import pyarrow.dataset as pads
+    files = sorted(_glob.glob(pattern))
+    if not files:
+        raise ValueError(f"no parquet files match {pattern}")
+    ds = pads.dataset(files, format="parquet")
+
+    featA_l, featB_l, mask_l, label_l = [], [], [], []
+    kept = skipped = scanned = 0
+    piece_map = {"P": 0, "N": 1, "B": 2, "R": 3, "Q": 4, "K": 5,
+                 "p": 6, "n": 7, "b": 8, "r": 9, "q": 10, "k": 11}
+    sq = np.arange(64, dtype=np.int64)
+    sq_flip = sq ^ 56
+
+    filt = (pads.field("depth") >= min_depth) & (pads.field("cp").is_valid()) & (pads.field("mate").is_valid() == False)
+    scanner = ds.scan(filter=filt, columns=["fen", "cp"], batch_size=65536)
+    for batch in scanner.to_batches():
+        fens = batch.column("fen").to_pylist()
+        cps = batch.column("cp").to_pylist()
+        for fen, cp_white in zip(fens, cps):
+            scanned += 1
+            parts = fen.split()
+            if len(parts) < 2:
+                skipped += 1
+                continue
+            stm = 0 if parts[1] == "w" else 1
+            codes = np.full(64, 15, dtype=np.int64)
+            r, f = 7, 0
+            ok = True
+            for ch in parts[0]:
+                if ch == "/":
+                    r, f = r - 1, 0
+                elif ch.isdigit():
+                    f += int(ch)
+                elif ch in piece_map:
+                    if r < 0 or f > 7:
+                        ok = False
+                        break
+                    codes[r * 8 + f] = piece_map[ch]
+                    f += 1
+                else:
+                    ok = False
+                    break
+            if not ok:
+                skipped += 1
+                continue
+            label_stm = cp_white if stm == 0 else -cp_white
+            label_stm = max(-3200.0, min(3200.0, float(label_stm)))
+
+            sqA = sq_flip if stm == 1 else sq
+            is_white = codes < 6
+            valid = codes < 12
+            type_ = codes % 6
+            own_a = is_white == (stm == 0)
+            featA = (np.where(own_a, type_, type_ + 6) * 64 + sqA).astype(np.int16)
+            featB = (np.where(own_a, type_ + 6, type_) * 64 + (sqA ^ 56)).astype(np.int16)
+            featA[~valid] = 0
+            featB[~valid] = 0
+
+            featA_l.append(featA)
+            featB_l.append(featB)
+            mask_l.append(valid.astype(np.uint8))
+            label_l.append(label_stm)
+            kept += 1
+            if kept % 1_000_000 == 0:
+                print(f"  parsed {kept} positions (scanned {scanned}, skipped {skipped})")
+            if max_positions and kept >= max_positions:
+                break
+        if max_positions and kept >= max_positions:
+            break
+
+    featA = np.stack(featA_l)
+    featB = np.stack(featB_l)
+    mask = np.stack(mask_l).astype(np.float32)
+    labels = np.array(label_l, dtype=np.float32)
+    print(f"parquet: kept {kept} positions (scanned {scanned}, skipped {skipped}) at depth >= {min_depth}")
+    return featA, featB, labels, None, mask
+
+
 # ---------------------------------------------------------------- model ----
 
 class SmallNNUE(nn.Module):
@@ -220,7 +305,8 @@ def main():
     ap.add_argument("--lr", type=float, default=1e-3)
     ap.add_argument("--weight-decay", type=float, default=0.01)
     ap.add_argument("--max-steps", type=int, default=0, help="debug cap on optimizer steps (0 = off)")
-    ap.add_argument("--max-positions", type=int, default=0, help="csv subsample cap (0 = all)")
+    ap.add_argument("--max-positions", type=int, default=0, help="csv/parquet subsample cap (0 = all)")
+    ap.add_argument("--min-depth", type=int, default=15, help="parquet label quality filter (lichess depth)")
     args = ap.parse_args()
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -228,6 +314,9 @@ def main():
 
     if args.data.endswith(".csv"):
         featA, featB, labels, results, mask = load_csv(args.data, args.max_positions)
+    elif "*" in args.data or args.data.endswith(".parquet"):
+        featA, featB, labels, results, mask = load_parquet(
+            args.data, args.max_positions, args.min_depth)
     else:
         featA, featB, labels, results, mask = load_data(args.data)
     n = featA.shape[0]
@@ -313,21 +402,21 @@ def quantize_and_save(model: SmallNNUE, out: str):
     # TS layout: w1 [view][feature][row] (feature-major), w2 [in][out] (in-major)
     w1_fm = np.transpose(w1q, (0, 2, 1))  # (2, IN, h1)
 
-    out = bytearray()
-    out += b"C0NNUE01"
-    out += int(IN).to_bytes(4, "little")
-    out += int(h1).to_bytes(4, "little")
-    out += int(h2).to_bytes(4, "little")
-    out += int(QA).to_bytes(2, "little", signed=True)
-    out += int(QB).to_bytes(2, "little", signed=True)
-    out += int(SCALE).to_bytes(2, "little", signed=True)
-    out += w1_fm.astype("<i2").tobytes()
-    out += b1q.astype("<i2").tobytes()
-    out += w2q.astype(np.int8).tobytes()
-    out += w3q.astype(np.int8).tobytes()
+    blob = bytearray()
+    blob += b"C0NNUE01"
+    blob += int(IN).to_bytes(4, "little")
+    blob += int(h1).to_bytes(4, "little")
+    blob += int(h2).to_bytes(4, "little")
+    blob += int(QA).to_bytes(2, "little", signed=True)
+    blob += int(QB).to_bytes(2, "little", signed=True)
+    blob += int(SCALE).to_bytes(2, "little", signed=True)
+    blob += w1_fm.astype("<i2").tobytes()
+    blob += b1q.astype("<i2").tobytes()
+    blob += w2q.astype(np.int8).tobytes()
+    blob += w3q.astype(np.int8).tobytes()
     with open(out, "wb") as f:
-        f.write(out)
-    print(f"quantized net -> {out} ({len(out) / 1024:.0f}KB)")
+        f.write(blob)
+    print(f"quantized net -> {out} ({len(blob) / 1024:.0f}KB)")
 
 
 def fen_to_features(fen: str):
