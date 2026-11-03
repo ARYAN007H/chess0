@@ -281,6 +281,17 @@ class PovAudit:
         self.ab += int(ok[~w].sum())
         self.tb += int((~w).sum())
 
+    def merge(self, other: "PovAudit"):
+        self.aw += other.aw
+        self.tw += other.tw
+        self.ab += other.ab
+        self.tb += other.tb
+        self.n_equal += other.n_equal
+        self.n_zero += other.n_zero
+        for s in other.samples:
+            if len(self.samples) < 12:
+                self.samples.append(s)
+
     def rates(self):
         rw = 100.0 * self.aw / self.tw if self.tw else 0.0
         rb = 100.0 * self.ab / self.tb if self.tb else 0.0
@@ -335,22 +346,143 @@ class PovAudit:
             print(f"  {fen} | {cp} | {stm} | {mat:+d}")
 
 
-def load_parquet(pattern: str, max_positions: int = 0, min_depth: int = 15):
-    """Lichess evaluations dataset (dedup Parquet): columns fen, depth,
-    knodes, cp, mate. Filters depth >= min_depth, cp present, mate absent.
-    Labels WHITE-POV cp -> STM POV (convention verified against the official
-    DB). Streams decoded blocks to scratch files and returns copy-on-write
-    memmaps — RAM stays ~flat with N (in-RAM accumulation OOMs Kaggle's
-    ~13GB sessions past ~60M positions; this unlocks 100M-340M runs)."""
-    import glob as _glob
+def _parse_parquet_file(job):
+    """Worker: decode one parquet file to scratch raw files (fork-safe, picks
+    up module state by fork). Returns (prefix, kept, audit fields...) for the
+    parent to merge. max_rows > 0 caps kept rows (canary mode)."""
+    path, prefix, min_depth, max_rows = job
+    import pyarrow.parquet as pq
+    audit = PovAudit()
+    CH = 100_000
+    outs = {k: open(prefix + k + ".raw", "wb") for k in ("fa", "fb", "m", "l")}
+    cur_a = np.zeros((CH, 32), np.int16)
+    cur_b = np.zeros((CH, 32), np.int16)
+    cur_m = np.zeros((CH, 32), np.uint8)
+    cur_l = np.zeros(CH, np.float32)
+    cur_n = kept = 0
+
+    def flush():
+        nonlocal cur_n
+        if cur_n == 0:
+            return
+        outs["fa"].write(cur_a[:cur_n].tobytes())
+        outs["fb"].write(cur_b[:cur_n].tobytes())
+        outs["m"].write(cur_m[:cur_n].tobytes())
+        outs["l"].write(cur_l[:cur_n].tobytes())
+        cur_n = 0
+
+    pf = pq.ParquetFile(path)
+    for rg in range(pf.num_row_groups):
+        tbl = pf.read_row_group(rg, columns=["fen", "cp", "depth", "mate"])
+        fens = tbl.column("fen").to_pylist()
+        cps = tbl.column("cp").to_pylist()
+        deps = tbl.column("depth").to_pylist()
+        mates = tbl.column("mate").to_pylist()
+        for fen, cp_white, depth, mate in zip(fens, cps, deps, mates):
+            if cp_white is None or mate is not None or depth is None or depth < min_depth:
+                continue
+            codes, stm = fen_row_to_codes(fen)
+            if codes is None:
+                continue
+            label_stm = max(-3200.0, min(3200.0, float(cp_white if stm == 0 else -cp_white)))
+            featA, featB, maskA = _features_from_codes(codes, stm)
+            cur_a[cur_n] = featA
+            cur_b[cur_n] = featB
+            cur_m[cur_n] = maskA.astype(np.uint8)
+            cur_l[cur_n] = label_stm
+            audit.add(fen, cp_white, stm, int((val_map[codes]).sum()), label_stm)
+            cur_n += 1
+            kept += 1
+            if cur_n >= CHUNK_ROWS:
+                flush()
+            if max_rows and kept >= max_rows:
+                break
+        if max_rows and kept >= max_rows:
+            break
+    flush()
+    for f in outs.values():
+        f.close()
+    return (prefix, kept, audit.aw, audit.tw, audit.ab, audit.tb,
+            audit.n_equal, audit.n_zero, audit.samples)
+
+
+CHUNK_ROWS = 100_000
+
+
+def _load_parquet_parallel(files, min_depth: int, workers: int):
+    """Full-dataset decode: canary audit on the first 2M rows (fail fast),
+    then one worker process per parquet file streaming to scratch files;
+    raw files concatenated on disk and returned as memmaps. RAM stays flat;
+    wall time ~= total_rows / (workers x single-thread rate)."""
+    import shutil
     import tempfile
-    import pyarrow.dataset as pads
+    import multiprocessing as mp
+    tmpdir = tempfile.mkdtemp(prefix="nnue-parquet-")
+    print(f"parquet: canary audit (first 2M rows of {files[0].rsplit('/', 1)[-1]}) ...")
+    job = (files[0], tmpdir + "/canary-", min_depth, 2_000_000)
+    _, ckept, aw, tw, ab, tb, neq, nzero, samples = _parse_parquet_file(job)
+    canary = PovAudit()
+    canary.aw, canary.tw, canary.ab, canary.tb = aw, tw, ab, tb
+    canary.n_equal, canary.n_zero, canary.samples = neq, nzero, samples
+    canary.fast_check()  # aborts before the pool spins up if labels are broken
+    print(canary.report())
+
+    n = len(files)
+    w = max(1, min(workers, n))
+    print(f"parquet: parallel decode of {n} files with {w} workers ...", flush=True)
+    jobs = [(f, f"{tmpdir}/w{i:03d}-", min_depth, 0) for i, f in enumerate(files)]
+    # spawn, not fork: pyarrow runs internal thread pools, and forking a
+    # process with live threadpool state crashes the children (measured).
+    ctx = mp.get_context("spawn")
+    with ctx.Pool(w) as pool:
+        results = pool.map(_parse_parquet_file, jobs)
+
+    merged = PovAudit()
+    kept = 0
+    for r in results:
+        prefix, k, aw, tw, ab, tb, neq, nzero, samples = r
+        kept += k
+        part = PovAudit()
+        part.aw, part.tw, part.ab, part.tb = aw, tw, ab, tb
+        part.n_equal, part.n_zero, part.samples = neq, nzero, samples
+        merged.merge(part)
+    print(f"parquet: decoded {kept:,} positions from {n} files")
+    if kept == 0:
+        raise SystemExit("parquet: no positions matched the data filter")
+    merged.final_check()
+    for key in ("fa", "fb", "m", "l"):
+        with open(tmpdir + f"/{key}.raw", "wb") as out:
+            for r in results:
+                with open(r[0] + key + ".raw", "rb") as src:
+                    shutil.copyfileobj(src, out, 1 << 22)
+    featA = np.memmap(tmpdir + "/fa.raw", dtype=np.int16, mode="c", shape=(kept, 32))
+    featB = np.memmap(tmpdir + "/fb.raw", dtype=np.int16, mode="c", shape=(kept, 32))
+    mask = np.memmap(tmpdir + "/m.raw", dtype=np.uint8, mode="c", shape=(kept, 32))
+    labels = np.memmap(tmpdir + "/l.raw", dtype=np.float32, mode="c", shape=(kept,))
+    return featA, featB, labels, None, mask
+
+
+def load_parquet(pattern: str, max_positions: int = 0, min_depth: int = 15, workers: int = 0):
+    """Lichess evaluations dataset (dedup Parquet). Capped/subsampled runs use
+    the proven sequential loader; uncapped multi-file runs (full-dataset
+    pretrains) use the parallel decoder (one process per file, canary audit
+    first). Both return disk-backed memmaps — RAM stays ~flat with N."""
+    import glob as _glob
     files = sorted(_glob.glob(pattern, recursive=True))  # ** supported
     if not files:
         raise ValueError(f"no parquet files match {pattern}")
+    if max_positions or workers == 1 or len(files) == 1:
+        return _load_parquet_sequential(files, max_positions, min_depth)
+    import multiprocessing as _mp
+    return _load_parquet_parallel(files, min_depth, workers or (_mp.cpu_count() or 1))
+
+
+def _load_parquet_sequential(files, max_positions: int, min_depth: int):
+    import tempfile
+    import pyarrow.dataset as pads
     ds = pads.dataset(files, format="parquet")
 
-    CHUNK = 100_000
+    CHUNK = CHUNK_ROWS
     tmpdir = tempfile.mkdtemp(prefix="nnue-parquet-")
     outs = {k: open(os.path.join(tmpdir, k + ".raw"), "wb")
             for k in ("fa", "fb", "m", "l")}
@@ -465,13 +597,16 @@ def main():
     ap.add_argument("--max-positions", type=int, default=0, help="csv/parquet subsample cap (0 = all)")
     ap.add_argument("--min-depth", type=int, default=15, help="parquet label quality filter (lichess depth)")
     ap.add_argument("--seed", type=int, default=12345, help="torch seed (numpy split is already seeded)")
+    ap.add_argument("--h1", type=int, default=32, help="layer-1 width (TS reads H1 from the file header)")
+    ap.add_argument("--h2", type=int, default=32, help="layer-2 width")
+    ap.add_argument("--workers", type=int, default=0, help="parallel parquet decode workers (0 = auto, 1 = sequential)")
     ap.add_argument("--resume", default="",
                     help="float .pt state_dict to fine-tune from (default: random init)")
     args = ap.parse_args()
 
     torch.manual_seed(args.seed)
     device = "cuda" if torch.cuda.is_available() else "cpu"
-    print(f"device: {device}")
+    print(f"device: {device}  net: 768x{args.h1}x2 -> {args.h2} -> 1")
 
     if args.data.endswith(".csv"):
         featA, featB, labels, results, mask = load_csv(args.data, args.max_positions)
@@ -479,7 +614,7 @@ def main():
         featA, featB, labels, results, mask = load_data(args.data)
     elif "*" in args.data or args.data.endswith(".parquet"):
         featA, featB, labels, results, mask = load_parquet(
-            args.data, args.max_positions, args.min_depth)
+            args.data, args.max_positions, args.min_depth, args.workers)
     else:
         raise SystemExit(f"--data must be .csv, .bin, .parquet or a glob (got {args.data})")
     n = featA.shape[0]
@@ -503,7 +638,7 @@ def main():
     y = torch.from_numpy(labels / SCALE).to(dev)          # network trains in w3 units (cp/400)
     msk = torch.from_numpy(mask)      # uint8 (N, 32) on CPU
 
-    model = SmallNNUE().to(dev)
+    model = SmallNNUE(h1=args.h1, h2=args.h2).to(dev)
     if args.resume:
         model.load_state_dict(torch.load(args.resume, map_location=dev))
         print(f"resumed weights from {args.resume} (fine-tune: use a low --lr)")
