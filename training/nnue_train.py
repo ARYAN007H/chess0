@@ -51,6 +51,7 @@ SCALE = 400
 # ---------------------------------------------------------------- data ----
 
 def load_data(path: str):
+    """NDD1 binary loader (scripts/gen-nnue-data.ts output)."""
     raw = np.fromfile(path, dtype=np.uint8)
     if raw.size < 8 or bytes(raw[:4]) != b"NDD1":
         raise ValueError(f"{path}: not an NDD1 file")
@@ -58,7 +59,6 @@ def load_data(path: str):
     recs = raw[8:8 + count * 36].reshape(count, 36)
     stm = recs[:, 0].astype(np.int64)
 
-    # decode nibbles -> (N, 64) piece codes
     lo = (recs[:, 1:33] & 0x0F).astype(np.int64)
     hi = (recs[:, 1:33] >> 4).astype(np.int64)
     codes = np.empty((count, 64), dtype=np.int64)
@@ -77,28 +77,74 @@ def load_data(path: str):
     typeB = np.where(own_a, type_ + 6, type_)
     featA = typeA * 64 + sqA
     featB = typeB * 64 + (sqA ^ 56)
-
-    # pack to fixed 32 slots (pad index 0 + mask); positions have ≤32 pieces
     featA = np.where(valid, featA, 0)
     featB = np.where(valid, featB, 0)
+    featA, maskA = pack32(featA, valid)
+    featB, _ = pack32(featB, valid)
     labels = recs[:, 33:35].copy().view(np.int16).astype(np.float32).reshape(count)
     results = recs[:, 35].astype(np.int64)
-    return featA, featB, labels, results, valid.astype(np.float32)
+    return featA.astype(np.int16), featB.astype(np.int16), labels, results, maskA.astype(np.float32)
 
+
+def fen_row_to_codes(fen: str):
+    """FEN board -> (64,) piece codes (0-5 white, 6-11 black, 15 empty)."""
+    piece_map = {"P": 0, "N": 1, "B": 2, "R": 3, "Q": 4, "K": 5,
+                 "p": 6, "n": 7, "b": 8, "r": 9, "q": 10, "k": 11}
+    parts = fen.split()
+    if len(parts) < 2:
+        return None, None
+    stm = 0 if parts[1] == "w" else 1
+    codes = np.full(64, 15, dtype=np.int64)
+    r, f = 7, 0
+    for ch in parts[0]:
+        if ch == "/":
+            r, f = r - 1, 0
+        elif ch.isdigit():
+            f += int(ch)
+        elif ch in piece_map:
+            if r < 0 or f > 7:
+                return None, None
+            codes[r * 8 + f] = piece_map[ch]
+            f += 1
+        else:
+            return None, None
+    return codes, stm
+
+
+def _features_from_codes(codes: np.ndarray, stm: int):
+    """Both views' feature ids + validity for one position (packed 32 slots)."""
+    sq = np.arange(64, dtype=np.int64)
+    sqA = sq_flip64 if stm == 1 else sq
+    is_white = codes < 6
+    valid = codes < 12
+    type_ = codes % 6
+    own_a = is_white == (stm == 0)
+    featA64 = (np.where(own_a, type_, type_ + 6) * 64 + sqA).astype(np.int16)
+    featB64 = (np.where(own_a, type_ + 6, type_) * 64 + (sqA ^ 56)).astype(np.int16)
+    featA64[~valid] = 0
+    featB64[~valid] = 0
+    featA, maskA = pack32(featA64[None], valid[None])
+    featB, _ = pack32(featB64[None], valid[None])
+    return featA[0], featB[0], maskA[0]
+
+
+def pack32(feat: np.ndarray, valid: np.ndarray):
+    """Stable-partition valid features into the first 32 slots (positions have
+    ≤32 pieces); returns (packed, mask). The model is slot-agnostic: the mask
+    still zeroes padding."""
+    order = np.argsort(~valid, axis=1, kind="stable")
+    packed = np.take_along_axis(feat, order, axis=1)[:, :32]
+    m = np.take_along_axis(valid, order, axis=1)[:, :32]
+    return packed, m
+
+
+sq_flip64 = np.arange(64, dtype=np.int64) ^ 56
+val_map = np.array([1, 3, 3, 5, 9, 0, -1, -3, -3, -5, -9, 0, 0, 0, 0, 0])
 
 
 def load_csv(path: str, max_positions: int = 0):
-    """Stream a Kaggle-style FEN,eval CSV (white-POV labels, e.g. the
-    ronakbadhe/chess-evaluations 12.9M-row dataset) into the same compact
-    feature arrays the NDD1 path produces. Labels: white-POV cp -> STM POV
-    (negated when black to move). Rows with mate ('#') or unparseable evals
-    are skipped. int16 feature storage keeps ~13M positions ≈ 2.5GB."""
-    import csv, sys
-    piece_map = {"P": 0, "N": 1, "B": 2, "R": 3, "Q": 4, "K": 5,
-                 "p": 6, "n": 7, "b": 8, "r": 9, "q": 10, "k": 11}
-    sq = np.arange(64, dtype=np.int64)
-    sq_flip = sq ^ 56
-
+    """Kaggle FEN,eval CSV (white-POV labels) -> compact feature arrays."""
+    import csv
     featA_l, featB_l, mask_l, label_l = [], [], [], []
     kept = skipped = 0
     with open(path, newline="") as f:
@@ -114,7 +160,7 @@ def load_csv(path: str, max_positions: int = 0):
             if len(row) <= max(fen_col, eval_col):
                 continue
             ev_s = row[eval_col].strip()
-            if ev_s.startswith("#") or ev_s == "":
+            if ev_s == "" or ev_s.startswith("#"):
                 skipped += 1
                 continue
             try:
@@ -122,55 +168,22 @@ def load_csv(path: str, max_positions: int = 0):
             except ValueError:
                 skipped += 1
                 continue
-            fen = row[fen_col].strip()
-            parts = fen.split()
-            if len(parts) < 2:
-                skipped += 1
-                continue
-            stm = 0 if parts[1] == "w" else 1
-            codes = np.full(64, 15, dtype=np.int64)
-            r, f = 7, 0
-            ok = True
-            for ch in parts[0]:
-                if ch == "/":
-                    r, f = r - 1, 0
-                elif ch.isdigit():
-                    f += int(ch)
-                elif ch in piece_map:
-                    if r < 0 or f > 7:
-                        ok = False
-                        break
-                    codes[r * 8 + f] = piece_map[ch]
-                    f += 1
-                else:
-                    ok = False
-                    break
-            if not ok:
+            codes, stm = fen_row_to_codes(row[fen_col].strip())
+            if codes is None:
                 skipped += 1
                 continue
             label_stm = eval_white if stm == 0 else -eval_white
             label_stm = max(-3200.0, min(3200.0, label_stm))
-
-            sqA = sq_flip if stm == 1 else sq
-            is_white = codes < 6
-            valid = codes < 12
-            type_ = codes % 6
-            own_a = is_white == (stm == 0)
-            featA = (np.where(own_a, type_, type_ + 6) * 64 + sqA).astype(np.int16)
-            featB = (np.where(own_a, type_ + 6, type_) * 64 + (sqA ^ 56)).astype(np.int16)
-            featA[~valid] = 0
-            featB[~valid] = 0
-
+            featA, featB, maskA = _features_from_codes(codes, stm)
             featA_l.append(featA)
             featB_l.append(featB)
-            mask_l.append(valid.astype(np.uint8))
+            mask_l.append(maskA.astype(np.uint8))
             label_l.append(label_stm)
             kept += 1
             if kept % 1_000_000 == 0:
                 print(f"  parsed {kept} positions (skipped {skipped})")
             if max_positions and kept >= max_positions:
                 break
-
     featA = np.stack(featA_l)
     featB = np.stack(featB_l)
     mask = np.stack(mask_l).astype(np.float32)
@@ -179,12 +192,10 @@ def load_csv(path: str, max_positions: int = 0):
     return featA, featB, labels, None, mask
 
 
-
 def load_parquet(pattern: str, max_positions: int = 0, min_depth: int = 15):
-    """Load the Lichess evaluations dataset (dedup Parquet version) directly:
-    columns fen, depth, knodes, cp, mate. Filters: depth >= min_depth, cp
-    present, mate skipped. Labels are WHITE-POV cp -> converted to STM POV.
-    Streams row-groups via pyarrow; keeps int16 features (~196B/position)."""
+    """Lichess evaluations dataset (dedup Parquet): columns fen, depth,
+    knodes, cp, mate. Filters depth >= min_depth, cp present, mate absent.
+    Labels WHITE-POV cp -> STM POV. Chunked compact storage (~196B/position)."""
     import glob as _glob
     import pyarrow.dataset as pads
     files = sorted(_glob.glob(pattern))
@@ -192,62 +203,57 @@ def load_parquet(pattern: str, max_positions: int = 0, min_depth: int = 15):
         raise ValueError(f"no parquet files match {pattern}")
     ds = pads.dataset(files, format="parquet")
 
-    featA_l, featB_l, mask_l, label_l = [], [], [], []
-    kept = skipped = scanned = 0
-    piece_map = {"P": 0, "N": 1, "B": 2, "R": 3, "Q": 4, "K": 5,
-                 "p": 6, "n": 7, "b": 8, "r": 9, "q": 10, "k": 11}
-    sq = np.arange(64, dtype=np.int64)
-    sq_flip = sq ^ 56
+    CHUNK = 100_000
+    blocks_a, blocks_b, blocks_m, blocks_l, blocks_s = [], [], [], [], []
+    cur_a = np.zeros((CHUNK, 32), np.int16)
+    cur_b = np.zeros((CHUNK, 32), np.int16)
+    cur_m = np.zeros((CHUNK, 32), np.uint8)
+    cur_l = np.zeros(CHUNK, np.float32)
+    cur_s = np.zeros(CHUNK, np.float32)
+    cur_n = 0
 
+    def flush():
+        nonlocal cur_a, cur_b, cur_m, cur_l, cur_s, cur_n
+        if cur_n == 0:
+            return
+        blocks_a.append(cur_a[:cur_n].copy())
+        blocks_b.append(cur_b[:cur_n].copy())
+        blocks_m.append(cur_m[:cur_n].copy())
+        blocks_l.append(cur_l[:cur_n].copy())
+        blocks_s.append(cur_s[:cur_n].copy())
+        cur_a = np.zeros((CHUNK, 32), np.int16)
+        cur_b = np.zeros((CHUNK, 32), np.int16)
+        cur_m = np.zeros((CHUNK, 32), np.uint8)
+        cur_l = np.zeros(CHUNK, np.float32)
+        cur_s = np.zeros(CHUNK, np.float32)
+        cur_n = 0
+
+    kept = skipped = scanned = 0
     filt = (pads.field("depth") >= min_depth) & (pads.field("cp").is_valid()) & (pads.field("mate").is_valid() == False)
-    scanner = ds.scan(filter=filt, columns=["fen", "cp"], batch_size=65536)
+    scanner = ds.scanner(filter=filt, columns=["fen", "cp"], batch_size=65536)
     for batch in scanner.to_batches():
         fens = batch.column("fen").to_pylist()
         cps = batch.column("cp").to_pylist()
         for fen, cp_white in zip(fens, cps):
             scanned += 1
-            parts = fen.split()
-            if len(parts) < 2:
-                skipped += 1
-                continue
-            stm = 0 if parts[1] == "w" else 1
-            codes = np.full(64, 15, dtype=np.int64)
-            r, f = 7, 0
-            ok = True
-            for ch in parts[0]:
-                if ch == "/":
-                    r, f = r - 1, 0
-                elif ch.isdigit():
-                    f += int(ch)
-                elif ch in piece_map:
-                    if r < 0 or f > 7:
-                        ok = False
-                        break
-                    codes[r * 8 + f] = piece_map[ch]
-                    f += 1
-                else:
-                    ok = False
-                    break
-            if not ok:
+            codes, stm = fen_row_to_codes(fen)
+            if codes is None:
                 skipped += 1
                 continue
             label_stm = cp_white if stm == 0 else -cp_white
             label_stm = max(-3200.0, min(3200.0, float(label_stm)))
+            featA, featB, maskA = _features_from_codes(codes, stm)
 
-            sqA = sq_flip if stm == 1 else sq
-            is_white = codes < 6
-            valid = codes < 12
-            type_ = codes % 6
-            own_a = is_white == (stm == 0)
-            featA = (np.where(own_a, type_, type_ + 6) * 64 + sqA).astype(np.int16)
-            featB = (np.where(own_a, type_ + 6, type_) * 64 + (sqA ^ 56)).astype(np.int16)
-            featA[~valid] = 0
-            featB[~valid] = 0
-
-            featA_l.append(featA)
-            featB_l.append(featB)
-            mask_l.append(valid.astype(np.uint8))
-            label_l.append(label_stm)
+            cur_a[cur_n] = featA
+            cur_b[cur_n] = featB
+            cur_m[cur_n] = maskA.astype(np.uint8)
+            cur_l[cur_n] = label_stm
+            mat = float(np.sign((val_map[codes]).sum()))  # 0 = equal material, excluded
+            # expected label sign from STM POV: material sign flipped when black moves
+            cur_s[cur_n] = mat * (1.0 if stm == 0 else -1.0)
+            cur_n += 1
+            if cur_n >= CHUNK:
+                flush()
             kept += 1
             if kept % 1_000_000 == 0:
                 print(f"  parsed {kept} positions (scanned {scanned}, skipped {skipped})")
@@ -256,10 +262,25 @@ def load_parquet(pattern: str, max_positions: int = 0, min_depth: int = 15):
         if max_positions and kept >= max_positions:
             break
 
-    featA = np.stack(featA_l)
-    featB = np.stack(featB_l)
-    mask = np.stack(mask_l).astype(np.float32)
-    labels = np.array(label_l, dtype=np.float32)
+    flush()
+    featA = np.concatenate(blocks_a)
+    featB = np.concatenate(blocks_b)
+    mask = np.concatenate(blocks_m).astype(np.float32)
+    labels = np.concatenate(blocks_l)
+
+    # POV sanity: label sign vs material sign (captured at parse time).
+    agree = total = 0
+    for blk_s, blk_l in zip(blocks_s, blocks_l):
+        mat_s = np.sign(blk_s)
+        lab_s = np.sign(blk_l)
+        nz = mat_s != 0
+        agree += int((mat_s[nz] == lab_s[nz]).sum())
+        total += int(nz.sum())
+    if total:
+        pct = 100 * agree / total
+        print(f"POV sanity: label sign agrees with expected sign on {pct:.1f}% of {total} positions (healthy 85-100%; ~50% = POV BUG)")
+        if total >= 1000 and pct < 70:
+            raise SystemExit("POV sanity FAILED - label perspective conversion is wrong; aborting before a wasted training run")
     print(f"parquet: kept {kept} positions (scanned {scanned}, skipped {skipped}) at depth >= {min_depth}")
     return featA, featB, labels, None, mask
 
@@ -329,15 +350,21 @@ def main():
     val_idx = torch.from_numpy(perm[:n_val])
     trn_idx = torch.from_numpy(perm[n_val:])
     dev = torch.device(device)
-    fA = torch.from_numpy(featA).to(dev)
-    fB = torch.from_numpy(featB).to(dev)
+    # Feature indices stay on CPU as int16 (2.6GB host for 20M positions);
+    # per batch we slice → cast to long → move (≈8MB/step). Storing int64 on
+    # the GPU would need 10.2GB VRAM and OOM the T4.
+    fA = torch.from_numpy(featA)      # int16 (N, 32) on CPU
+    fB = torch.from_numpy(featB)      # int16 (N, 32) on CPU
     y = torch.from_numpy(labels / SCALE).to(dev)          # network trains in w3 units (cp/400)
-    msk = torch.from_numpy(mask).to(dev)
+    msk = torch.from_numpy(mask)      # float32 (N, 32) on CPU
 
     model = SmallNNUE().to(dev)
     opt = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
     steps_per_epoch = max(1, trn_idx.numel() // args.batch)
     sched = torch.optim.lr_scheduler.CosineAnnealingLR(opt, T_max=args.epochs * steps_per_epoch, eta_min=1e-5)
+
+    def batch_to_device(b: torch.Tensor):
+        return (fA[b].to(dev).long(), fB[b].to(dev).long(), msk[b].to(dev), y[b].to(dev), b.to(dev))
 
     def eval_loss(idx: torch.Tensor) -> float:
         model.eval()
@@ -345,8 +372,9 @@ def main():
         with torch.no_grad():
             for s in range(0, idx.numel(), args.batch):
                 b = idx[s:s + args.batch]
-                pred = model(fA[b], fB[b], msk[b])
-                tgt = torch.sigmoid(y[b])
+                iA, iB, mk, yb, bd = batch_to_device(b)
+                pred = model(iA, iB, mk)
+                tgt = torch.sigmoid(yb)
                 tot += F.mse_loss(torch.sigmoid(pred), tgt, reduction="sum").item()
         model.train()
         return tot / idx.numel()
@@ -362,8 +390,9 @@ def main():
         rp = trn_idx[torch.randperm(trn_idx.numel())]
         for s in range(0, rp.numel() - args.batch + 1, args.batch):
             b = rp[s:s + args.batch]
-            pred = model(fA[b], fB[b], msk[b])
-            tgt = torch.sigmoid(y[b])
+            iA, iB, mk, yb, bd = batch_to_device(b)
+            pred = model(iA, iB, mk)
+            tgt = torch.sigmoid(yb)
             loss = F.mse_loss(torch.sigmoid(pred), tgt)
             opt.zero_grad(set_to_none=True)
             loss.backward()
