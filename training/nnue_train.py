@@ -386,10 +386,17 @@ def load_parquet(pattern: str, max_positions: int = 0, min_depth: int = 15):
     audit.fast_check()  # covers runs smaller than FAST_N
     if not blocks_a:
         raise SystemExit("parquet: no positions matched the data filter")
+    # Concatenate one array at a time and free its blocks immediately —
+    # peak RAM ~1.25x the final data instead of ~2x (OOMs 13GB Kaggle
+    # sessions at the 50M-position scale otherwise).
     featA = np.concatenate(blocks_a)
+    blocks_a.clear()
     featB = np.concatenate(blocks_b)
+    blocks_b.clear()
     mask = np.concatenate(blocks_m)  # uint8; cast to float per batch on GPU
+    blocks_m.clear()
     labels = np.concatenate(blocks_l)
+    blocks_l.clear()
     print(f"parquet: kept {kept} positions (scanned {scanned}, skipped {skipped}) at depth >= {min_depth}")
     audit.final_check()
     return featA, featB, labels, None, mask
