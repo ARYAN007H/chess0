@@ -75,7 +75,8 @@ jobs:
       - name: Merge shards (binary concat, header count fixed)
         run: |
           python3 - << 'EOF'
-          import glob, struct
+          import glob, os, struct
+          os.makedirs('data', exist_ok=True)  # fresh checkout has no data/ dir
           files = sorted(glob.glob('shards/nnue-shard-*.bin'))
           total = 0
           blobs = []
