@@ -67,7 +67,8 @@ Cell 2 (train — Kaggle data mounts at `/kaggle/input/`):
 ```
 
 5. **Run All**. Expect: ~1-3 hours on the T4 for ~1M positions × 8 epochs
-   (the trainer prints baseline/epoch/final losses and 3 reference evals).
+   (the trainer prints baseline + per-epoch train/valid losses and 4
+   reference evals — the exact integer forward of the quantized net).
 6. Notebook **Save Version** → the output pane will contain `nnue-v1.bin` →
    download it.
 
@@ -76,7 +77,8 @@ Cell 2 (train — Kaggle data mounts at `/kaggle/input/`):
 Drop `nnue-v1.bin` into the repo (or hand it over in chat — it's ~110KB) and:
 
 - Quick sanity: `npx tsx scripts/nnue-verify.ts data/nnue-v1.bin` — the evals
-  printed must match the trainer's reference evals within a few cp.
+  printed must match the trainer's reference evals line-for-line (both are
+  exact integer forwards of the same quantized net).
 - The real test: `npx tsx scripts/match.ts --a v3base --b v3nnue --pairs 40`
   — the net plays v3 search with the NNUE eval vs the tuned hand-written
   champion. It ships only if it wins (same 60% bar).
@@ -92,10 +94,13 @@ the net itself. Train a bigger/refreshed net on that data. Each round stacks.
 
 - **Trainer prints "data: 0 positions"** — the `.bin` didn't upload; check the
   Kaggle dataset contains the file at the path given to `--data`.
-- **Reference evals differ wildly from TS** — the feature extraction or
-  quantization spec drifted between `nnue_train.py` and `src/engine/nnue.ts`;
-  both files carry the same spec block, diff them.
-- **Kaggle session dies at ~9-12h** — the trainer checkpoints `nnue_float.pt`;
-  re-attach and continue, or just rerun with more data (the schedule restarts).
+- **Reference evals differ from TS at all** — a bug: both are exact integer
+  forwards of the same weights. The feature extraction or quantization spec
+  drifted between `nnue_train.py` and `src/engine/nnue.ts`; both files carry
+  the same spec block, diff them.
+- **Kaggle session dies at ~9-12h** — the trainer saves `nnue_float.pt` after
+  every epoch (weights only, no auto-resume): a rerun starts fresh, but the
+  per-epoch valid losses in the log show how far it got and whether it was
+  still improving.
 - **GPU quota exhausted** — Kaggle gives ~30 GPU-hours/week; the CPU path also
   works (same command, no accelerator), just ~5-8× slower.

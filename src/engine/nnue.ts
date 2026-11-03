@@ -137,7 +137,8 @@ export function evalNnueWhitePov(pos: Position): number {
   }
 
   // Layer 2 + 3 fused pass (int32-safe: ≤64×127×1024 ≈ 8.3M).
-  const l2 = new Int32Array(h2);
+  l2.fill(0); // scratch is reused across evals — must be re-zeroed (the old
+              // per-eval `new Int32Array` doubled as initialization)
   for (let inp = 0; inp < 2 * h1; inp++) {
     const a = act[inp];
     if (a === 0) continue;

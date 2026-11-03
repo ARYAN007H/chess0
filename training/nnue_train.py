@@ -37,6 +37,8 @@ Usage (Kaggle GPU or CPU):
 """
 
 import argparse
+import os
+
 import numpy as np
 import torch
 import torch.nn as nn
@@ -51,39 +53,54 @@ SCALE = 400
 # ---------------------------------------------------------------- data ----
 
 def load_data(path: str):
-    """NDD1 binary loader (scripts/gen-nnue-data.ts output)."""
+    """NDD1 binary loader (scripts/gen-nnue-data.ts output). Decodes in
+    100k-row chunks into preallocated small-dtype arrays so peak RSS stays
+    ~flat with N (the naive full-array version needed ~60x the final arrays
+    and OOMs Kaggle at the 3-10M merge target). The result byte is decoded
+    and returned but unused — reserved for WDL-blended targets (distillation)."""
     raw = np.fromfile(path, dtype=np.uint8)
     if raw.size < 8 or bytes(raw[:4]) != b"NDD1":
         raise ValueError(f"{path}: not an NDD1 file")
     count = int.from_bytes(raw[4:8], "little")
-    recs = raw[8:8 + count * 36].reshape(count, 36)
-    stm = recs[:, 0].astype(np.int64)
+    if raw.size < 8 + count * 36:
+        raise ValueError(f"{path}: truncated ({raw.size} bytes < 8 + {count} * 36)")
+    if count == 0:
+        raise SystemExit(f"{path}: no positions in file")
 
-    lo = (recs[:, 1:33] & 0x0F).astype(np.int64)
-    hi = (recs[:, 1:33] >> 4).astype(np.int64)
-    codes = np.empty((count, 64), dtype=np.int64)
-    codes[:, 0::2] = lo
-    codes[:, 1::2] = hi
-
-    sq = np.arange(64, dtype=np.int64)
+    CH = 100_000
+    featA = np.empty((count, 32), np.int16)
+    featB = np.empty((count, 32), np.int16)
+    maskA = np.empty((count, 32), np.uint8)
+    labels = np.empty(count, np.float32)
+    results = np.empty(count, np.int64)
+    sq = np.arange(64, dtype=np.int16)
     sq_flip = sq ^ 56
-    sqA = np.where(stm[:, None] == 1, sq_flip[None, :], sq[None, :])
-    is_white = codes < 6
-    valid = codes < 12
-    type_ = codes % 6
-    own_a = is_white == (stm[:, None] == 0)
+    for s in range(0, count, CH):
+        e = min(s + CH, count)
+        recs = raw[8 + s * 36: 8 + e * 36].reshape(e - s, 36)
+        stm = recs[:, 0].astype(np.int8)
+        codes = np.empty((e - s, 64), dtype=np.int16)
+        codes[:, 0::2] = recs[:, 1:33] & 0x0F
+        codes[:, 1::2] = recs[:, 1:33] >> 4
 
-    typeA = np.where(own_a, type_, type_ + 6)
-    typeB = np.where(own_a, type_ + 6, type_)
-    featA = typeA * 64 + sqA
-    featB = typeB * 64 + (sqA ^ 56)
-    featA = np.where(valid, featA, 0)
-    featB = np.where(valid, featB, 0)
-    featA, maskA = pack32(featA, valid)
-    featB, _ = pack32(featB, valid)
-    labels = recs[:, 33:35].copy().view(np.int16).astype(np.float32).reshape(count)
-    results = recs[:, 35].astype(np.int64)
-    return featA.astype(np.int16), featB.astype(np.int16), labels, results, maskA.astype(np.float32)
+        sqA = np.where(stm[:, None] == 1, sq_flip[None, :], sq[None, :])
+        is_white = codes < 6
+        valid = codes < 12
+        type_ = codes % 6
+        own_a = is_white == (stm[:, None] == 0)
+
+        typeA = np.where(own_a, type_, type_ + 6)
+        typeB = np.where(own_a, type_ + 6, type_)
+        fA = np.where(valid, typeA * 64 + sqA, 0)
+        fB = np.where(valid, typeB * 64 + (sqA ^ 56), 0)
+        pA, mA = pack32(fA, valid)
+        pB, _ = pack32(fB, valid)
+        featA[s:e] = pA
+        featB[s:e] = pB
+        maskA[s:e] = mA
+        labels[s:e] = recs[:, 33:35].copy().view("<i2").reshape(e - s)
+        results[s:e] = recs[:, 35]
+    return featA, featB, labels, results, maskA
 
 
 def fen_row_to_codes(fen: str):
@@ -91,13 +108,15 @@ def fen_row_to_codes(fen: str):
     piece_map = {"P": 0, "N": 1, "B": 2, "R": 3, "Q": 4, "K": 5,
                  "p": 6, "n": 7, "b": 8, "r": 9, "q": 10, "k": 11}
     parts = fen.split()
-    if len(parts) < 2:
+    if len(parts) < 2 or parts[1] not in ("w", "b"):
         return None, None
     stm = 0 if parts[1] == "w" else 1
     codes = np.full(64, 15, dtype=np.int64)
     r, f = 7, 0
     for ch in parts[0]:
         if ch == "/":
+            if f != 8:  # rank width must be exactly 8 (rejects "9/..." etc.)
+                return None, None
             r, f = r - 1, 0
         elif ch.isdigit():
             f += int(ch)
@@ -108,6 +127,8 @@ def fen_row_to_codes(fen: str):
             f += 1
         else:
             return None, None
+    if r != 0 or f != 8:  # exactly 8 ranks (start r=7, no trailing '/'), full last rank
+        return None, None
     return codes, stm
 
 
@@ -145,11 +166,14 @@ val_map = np.array([1, 3, 3, 5, 9, 0, -1, -3, -3, -5, -9, 0, 0, 0, 0, 0])
 def load_csv(path: str, max_positions: int = 0):
     """Kaggle FEN,eval CSV (white-POV labels) -> compact feature arrays."""
     import csv
+    audit = PovAudit()
     featA_l, featB_l, mask_l, label_l = [], [], [], []
     kept = skipped = 0
     with open(path, newline="") as f:
         reader = csv.reader(f)
-        header = next(reader)
+        header = next(reader, None)
+        if header is None:
+            raise SystemExit(f"{path}: empty CSV")
         fen_col, eval_col = 0, 1
         for i, col in enumerate(header):
             if col.strip().lower() == "fen":
@@ -174,6 +198,7 @@ def load_csv(path: str, max_positions: int = 0):
                 continue
             label_stm = eval_white if stm == 0 else -eval_white
             label_stm = max(-3200.0, min(3200.0, label_stm))
+            audit.add(row[fen_col].strip(), eval_white, stm, int((val_map[codes]).sum()), label_stm)
             featA, featB, maskA = _features_from_codes(codes, stm)
             featA_l.append(featA)
             featB_l.append(featB)
@@ -182,13 +207,18 @@ def load_csv(path: str, max_positions: int = 0):
             kept += 1
             if kept % 1_000_000 == 0:
                 print(f"  parsed {kept} positions (skipped {skipped})")
+                audit.fast_check()
             if max_positions and kept >= max_positions:
                 break
+    if kept == 0:
+        raise SystemExit(f"{path}: no usable positions (all mate/unparseable?)")
+    audit.fast_check()
     featA = np.stack(featA_l)
     featB = np.stack(featB_l)
-    mask = np.stack(mask_l).astype(np.float32)
+    mask = np.stack(mask_l)
     labels = np.array(label_l, dtype=np.float32)
     print(f"csv: kept {kept} positions, skipped {skipped} (mate/unparseable)")
+    audit.final_check()
     return featA, featB, labels, None, mask
 
 
@@ -354,9 +384,11 @@ def load_parquet(pattern: str, max_positions: int = 0, min_depth: int = 15):
 
     flush()
     audit.fast_check()  # covers runs smaller than FAST_N
+    if not blocks_a:
+        raise SystemExit("parquet: no positions matched the data filter")
     featA = np.concatenate(blocks_a)
     featB = np.concatenate(blocks_b)
-    mask = np.concatenate(blocks_m).astype(np.float32)
+    mask = np.concatenate(blocks_m)  # uint8; cast to float per batch on GPU
     labels = np.concatenate(blocks_l)
     print(f"parquet: kept {kept} positions (scanned {scanned}, skipped {skipped}) at depth >= {min_depth}")
     audit.final_check()
@@ -406,18 +438,22 @@ def main():
     ap.add_argument("--max-steps", type=int, default=0, help="debug cap on optimizer steps (0 = off)")
     ap.add_argument("--max-positions", type=int, default=0, help="csv/parquet subsample cap (0 = all)")
     ap.add_argument("--min-depth", type=int, default=15, help="parquet label quality filter (lichess depth)")
+    ap.add_argument("--seed", type=int, default=12345, help="torch seed (numpy split is already seeded)")
     args = ap.parse_args()
 
+    torch.manual_seed(args.seed)
     device = "cuda" if torch.cuda.is_available() else "cpu"
     print(f"device: {device}")
 
     if args.data.endswith(".csv"):
         featA, featB, labels, results, mask = load_csv(args.data, args.max_positions)
+    elif args.data.endswith(".bin"):
+        featA, featB, labels, results, mask = load_data(args.data)
     elif "*" in args.data or args.data.endswith(".parquet"):
         featA, featB, labels, results, mask = load_parquet(
             args.data, args.max_positions, args.min_depth)
     else:
-        featA, featB, labels, results, mask = load_data(args.data)
+        raise SystemExit(f"--data must be .csv, .bin, .parquet or a glob (got {args.data})")
     n = featA.shape[0]
     print(f"data: {n} positions")
 
@@ -427,30 +463,38 @@ def main():
     n_val = max(1, min(int(n * 0.02), n - 1))  # 2% validation; never swallows tiny debug sets
     val_idx = torch.from_numpy(perm[:n_val])
     trn_idx = torch.from_numpy(perm[n_val:])
+    if trn_idx.numel() < args.batch:
+        raise SystemExit(f"training split ({trn_idx.numel()}) < --batch {args.batch}; lower --batch or add data")
     dev = torch.device(device)
     # Feature indices stay on CPU as int16 (2.6GB host for 20M positions);
     # per batch we slice → cast to long → move (≈8MB/step). Storing int64 on
-    # the GPU would need 10.2GB VRAM and OOM the T4.
+    # the GPU would need 10.2GB VRAM and OOM the T4. Mask stays uint8 host-side
+    # (saves ~1.9GB at 20M) and casts to float on the GPU.
     fA = torch.from_numpy(featA)      # int16 (N, 32) on CPU
     fB = torch.from_numpy(featB)      # int16 (N, 32) on CPU
     y = torch.from_numpy(labels / SCALE).to(dev)          # network trains in w3 units (cp/400)
-    msk = torch.from_numpy(mask)      # float32 (N, 32) on CPU
+    msk = torch.from_numpy(mask)      # uint8 (N, 32) on CPU
 
     model = SmallNNUE().to(dev)
-    opt = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
+    opt = torch.optim.AdamW(
+        [{"params": [model.w1, model.w2, model.w3], "weight_decay": args.weight_decay},
+         {"params": [model.b1], "weight_decay": 0.0}],
+        lr=args.lr)
     steps_per_epoch = max(1, trn_idx.numel() // args.batch)
     sched = torch.optim.lr_scheduler.CosineAnnealingLR(opt, T_max=args.epochs * steps_per_epoch, eta_min=1e-5)
 
     def batch_to_device(b: torch.Tensor):
-        return (fA[b].to(dev).long(), fB[b].to(dev).long(), msk[b].to(dev), y[b].to(dev), b.to(dev))
+        return (fA[b].to(dev).long(), fB[b].to(dev).long(), msk[b].to(dev).float(), y[b])
 
     def eval_loss(idx: torch.Tensor) -> float:
+        if idx.numel() == 0:
+            return 0.0
         model.eval()
         tot = 0.0
         with torch.no_grad():
             for s in range(0, idx.numel(), args.batch):
                 b = idx[s:s + args.batch]
-                iA, iB, mk, yb, bd = batch_to_device(b)
+                iA, iB, mk, yb = batch_to_device(b)
                 pred = model(iA, iB, mk)
                 tgt = torch.sigmoid(yb)
                 tot += F.mse_loss(torch.sigmoid(pred), tgt, reduction="sum").item()
@@ -466,9 +510,11 @@ def main():
     stop = False
     for epoch in range(args.epochs):
         rp = trn_idx[torch.randperm(trn_idx.numel())]
+        loss_sum = torch.zeros((), device=dev)  # GPU-side sum; .item() once per epoch
+        nb = 0
         for s in range(0, rp.numel() - args.batch + 1, args.batch):
             b = rp[s:s + args.batch]
-            iA, iB, mk, yb, bd = batch_to_device(b)
+            iA, iB, mk, yb = batch_to_device(b)
             pred = model(iA, iB, mk)
             tgt = torch.sigmoid(yb)
             loss = F.mse_loss(torch.sigmoid(pred), tgt)
@@ -477,24 +523,31 @@ def main():
             opt.step()
             sched.step()
             step += 1
+            nb += 1
+            loss_sum += loss.detach()
             if args.max_steps and step >= args.max_steps:
                 stop = True
                 break
-        if step % max(1, steps_per_epoch // 4) < steps_per_epoch // 4 or stop:
-            print(f"epoch {epoch + 1}/{args.epochs} step {step}: loss {loss.item():.6f}")
+        # Per-epoch validation + checkpoint: overfitting is visible in the log
+        # and a crashed background run never loses more than one epoch.
+        torch.save(model.state_dict(), args.checkpoint)
+        print(f"epoch {epoch + 1}/{args.epochs} step {step}: "
+              f"train {loss_sum.item() / max(nb, 1):.6f} valid {eval_loss(val_idx):.6f}")
         if stop:
             break
     print(f"final: train {eval_loss(trn_idx):.6f}  valid {eval_loss(val_idx):.6f}")
 
     torch.save(model.state_dict(), args.checkpoint)
-    quantize_and_save(model, args.out)
-    print("reference evals (quantized weights, white POV):")
-    print_reference_evals(model)
+    q = quantize_and_save(model, args.out)
+    print_reference_evals(q)
 
 
 # ------------------------------------------------------------ quantize ----
 
 def quantize_and_save(model: SmallNNUE, out: str):
+    """Quantize to the TS layout, write atomically, and return the quantized
+    arrays (w1 feature-major, b1, w2 in-major, w3) for the integer reference
+    forward in print_reference_evals."""
     w1 = model.w1.detach().cpu().numpy().clip(-0.95, 0.95)
     b1 = model.b1.detach().cpu().numpy().clip(-0.95, 0.95)
     w2 = model.w2.detach().cpu().numpy().clip(-1.95, 1.95)
@@ -521,55 +574,49 @@ def quantize_and_save(model: SmallNNUE, out: str):
     blob += b1q.astype("<i2").tobytes()
     blob += w2q.astype(np.int8).tobytes()
     blob += w3q.astype(np.int8).tobytes()
-    with open(out, "wb") as f:
+    d = os.path.dirname(out)
+    if d:
+        os.makedirs(d, exist_ok=True)
+    tmp = out + ".tmp"
+    with open(tmp, "wb") as f:
         f.write(blob)
+    os.replace(tmp, out)  # atomic: a killed run can't leave a half-written net
     print(f"quantized net -> {out} ({len(blob) / 1024:.0f}KB)")
+    return w1_fm, b1q, w2q, w3q
 
 
-def fen_to_features(fen: str):
-    """Mini FEN decoder for reference evals (mirrors the record decoding)."""
-    parts = fen.split()
-    board, stm_s = parts[0], parts[1]
-    stm = 0 if stm_s == "w" else 1
-    codes = np.full(64, 15, dtype=np.int64)
-    piece_map = {"P": 0, "N": 1, "B": 2, "R": 3, "Q": 4, "K": 5,
-                 "p": 6, "n": 7, "b": 8, "r": 9, "q": 10, "k": 11}
-    r, f = 7, 0
-    for ch in board:
-        if ch == "/":
-            r, f = r - 1, 0
-        elif ch.isdigit():
-            f += int(ch)
-        else:
-            codes[r * 8 + f] = piece_map[ch]
-            f += 1
-    sq = np.arange(64, dtype=np.int64)
-    sqA = sq if stm == 0 else (sq ^ 56)
-    is_white = codes < 6
-    valid = codes < 12
-    type_ = codes % 6
-    own_a = is_white == (stm == 0)
-    featA = (np.where(own_a, type_, type_ + 6) * 64 + sqA)
-    featB = (np.where(own_a, type_ + 6, type_) * 64 + (sqA ^ 56))
-    mask = valid.astype(np.float32)
-    return (torch.from_numpy(featA)[None].long(),
-            torch.from_numpy(featB)[None].long(),
-            torch.from_numpy(mask)[None])
+def nnue_forward_int(q, codes, stm):
+    """Exact integer mirror of src/engine/nnue.ts evalNnueWhitePov for one
+    position: white-POV cp from the quantized weights. Every op mirrors the
+    TS (b1-seeded accumulators, clamp [0,QA], l2>>6, Math.round semantics)."""
+    w1_fm, b1q, w2q, w3q = q
+    h1 = b1q.shape[1]
+    featA, featB, maskA = _features_from_codes(codes, stm)
+    act = np.empty(2 * h1, np.int64)
+    for v, feats in ((0, featA), (1, featB)):
+        acc = w1_fm[v][feats[maskA.astype(bool)]].sum(axis=0) + b1q[v]
+        act[v * h1:(v + 1) * h1] = np.clip(acc, 0, QA)
+    l2 = (w2q.astype(np.int64) * act[:, None]).sum(axis=0)
+    l2act = np.clip(l2 >> 6, 0, QA)  # arithmetic shift, matches TS >>
+    y = int((w3q.astype(np.int64) * l2act).sum())
+    cp = int(np.floor(y * SCALE / (QB * QA) + 0.5))  # Math.round semantics
+    return -cp if stm == 1 else cp
 
 
-def print_reference_evals(model: SmallNNUE):
-    """Print quantized-style cp for sample FENs; cross-check vs src/engine/nnue.ts."""
-    model.eval()
+def print_reference_evals(q):
+    """Integer evals of the quantized net on the same FENs as
+    scripts/nnue-verify.ts — the two outputs must match line-for-line."""
     fens = [
         ("startpos", "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"),
         ("kiwipete", "r3k2r/p1ppqpb1/bn2pnp1/3PN3/1p2P3/2N2Q1p/PPPBBPPP/R3K2R w KQkq - 0 1"),
         ("endgame", "8/2p5/3p4/KP5r/1R3p1k/8/4P1P1/8 w - - 0 1"),
+        ("endgame-black", "8/2p5/3p4/KP5r/1R3p1k/8/4P1P1/8 b - - 0 1"),
     ]
-    with torch.no_grad():
-        for name, fen in fens:
-            idxA, idxB, mask = fen_to_features(fen)
-            y = model(idxA, idxB, mask).item()
-            print(f"reference eval {name}: {y * SCALE:.1f} cp (white POV)")
+    print("reference evals (integer forward of the quantized net, white POV):")
+    for name, fen in fens:
+        codes, stm = fen_row_to_codes(fen)
+        cp = nnue_forward_int(q, codes, stm)
+        print(f"eval {name}: {cp} cp (white POV)")
 
 
 if __name__ == "__main__":
