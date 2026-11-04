@@ -32,6 +32,7 @@ import {
 } from './types';
 import { Z_CASTLE_LO, Z_CASTLE_HI, Z_EP_LO, Z_EP_HI, Z_PIECE_LO, Z_PIECE_HI, Z_STM_LO, Z_STM_HI } from './zobrist';
 import { PST_EG, PST_MG, PHASE_BY_TYPE } from './psto';
+import { nnueAccAdd, nnueAccPush, nnueAccRemove } from './nnue';
 
 export class Position {
   board = new Int8Array(128);
@@ -74,6 +75,16 @@ export class Position {
   histRq = new Int32Array(MAX_HIST);
   histNpm = new Int32Array(MAX_HIST);
 
+  // NNUE layer-1 accumulator stack, lazily allocated when a net is loaded
+  // (MAX_HIST × 4 perspectives × H1 ints; ~1MB at H1=32). Slot `ply` holds
+  // the accumulators for the current placement — see nnue.ts for layout.
+  // nnueStamp mirrors nnue.ts's loadStamp (mismatch ⇒ full refresh);
+  // nnueValidFrom is the lowest ply at which the stack holds valid data
+  // (a mid-line lazy refresh leaves shallower slots stale garbage).
+  nnueStack: Int32Array | null = null;
+  nnueStamp = -1;
+  nnueValidFrom = Infinity;
+
   clone(): Position {
     const p = new Position();
     p.board.set(this.board);
@@ -110,6 +121,12 @@ export class Position {
     p.histMinors.set(this.histMinors);
     p.histRq.set(this.histRq);
     p.histNpm.set(this.histNpm);
+    // NNUE stack stays lazy on clones (null) — data scripts clone positions
+    // in bulk and almost never eval them; the first eval refreshes instead.
+    // Copying 1MB per clone would blow up memory in those paths.
+    p.nnueStack = null;
+    p.nnueStamp = -1;
+    p.nnueValidFrom = Infinity;
     return p;
   }
 
@@ -212,6 +229,13 @@ export function computeDerived(pos: Position): void {
   }
   pos.hashLo = lo | 0;
   pos.hashHi = hi | 0;
+
+  // The placement changed wholesale: any live NNUE accumulator stack now
+  // describes a DIFFERENT position. Invalidate so the next push/eval
+  // bootstraps from the new board instead of copying stale slots (Engine
+  // reset() re-parses the same Position every move).
+  pos.nnueStamp = -1;
+  pos.nnueValidFrom = Infinity;
 }
 
 // ---------------------------------------------------------------------------
@@ -244,6 +268,10 @@ export function makeMove(pos: Position, move: number): void {
   pos.histRq[h] = pos.rqCount[WHITE] | (pos.rqCount[BLACK] << 16);
   pos.histNpm[h] = pos.npmCount[WHITE] | (pos.npmCount[BLACK] << 16);
 
+  // Copy the NNUE accumulator slot h → h+1; the feature deltas below then
+  // land on the fresh slot (unmake stays a pure pointer decrement).
+  nnueAccPush(pos);
+
   let lo = pos.hashLo ^ Z_STM_LO;
   let hi = pos.hashHi ^ Z_STM_HI;
 
@@ -259,6 +287,7 @@ export function makeMove(pos: Position, move: number): void {
   lo ^= Z_PIECE_LO[pi * 128 + from];
   hi ^= Z_PIECE_HI[pi * 128 + from];
   removePieceEval(pos, piece, from);
+  nnueAccRemove(pos, h + 1, piece, from);
   pos.board[from] = 0;
 
   // Remove the captured piece.
@@ -270,6 +299,7 @@ export function makeMove(pos: Position, move: number): void {
     lo ^= Z_PIECE_LO[capPi * 128 + capSq];
     hi ^= Z_PIECE_HI[capPi * 128 + capSq];
     removePieceEval(pos, capPiece, capSq);
+    nnueAccRemove(pos, h + 1, capPiece, capSq);
     pos.board[capSq] = 0;
     pos.halfmove = 0;
   } else if (type === PAWN) {
@@ -286,6 +316,7 @@ export function makeMove(pos: Position, move: number): void {
   lo ^= Z_PIECE_LO[newPi * 128 + to];
   hi ^= Z_PIECE_HI[newPi * 128 + to];
   addPieceEval(pos, newPiece, to);
+  nnueAccAdd(pos, h + 1, newPiece, to);
   pos.board[to] = newPiece;
   if (type === KING) pos.kingSq[us] = to;
 
@@ -299,6 +330,8 @@ export function makeMove(pos: Position, move: number): void {
     hi ^= Z_PIECE_HI[rkPi * 128 + rookFrom] ^ Z_PIECE_HI[rkPi * 128 + rookTo];
     removePieceEval(pos, rook, rookFrom);
     addPieceEval(pos, rook, rookTo);
+    nnueAccRemove(pos, h + 1, rook, rookFrom);
+    nnueAccAdd(pos, h + 1, rook, rookTo);
     pos.board[rookFrom] = 0;
     pos.board[rookTo] = rook;
   }
@@ -394,6 +427,10 @@ export function makeNullMove(pos: Position): void {
   pos.histMinors[h] = pos.minorCount[WHITE] | (pos.minorCount[BLACK] << 16);
   pos.histRq[h] = pos.rqCount[WHITE] | (pos.rqCount[BLACK] << 16);
   pos.histNpm[h] = pos.npmCount[WHITE] | (pos.npmCount[BLACK] << 16);
+
+  // Placement is unchanged by a null move — copy the slot so unmake stays a
+  // pointer decrement.
+  nnueAccPush(pos);
 
   let lo = pos.hashLo ^ Z_STM_LO;
   let hi = pos.hashHi ^ Z_STM_HI;
