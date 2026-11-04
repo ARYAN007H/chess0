@@ -31,6 +31,15 @@ const paramsObj: Record<string, number> = EVAL === 'v3' ? evalV3Params : evalV2P
 const tablesMap: Record<string, Int16Array> = EVAL === 'v3' ? TABLES : TABLES2;
 type ParamsShape = typeof evalV3Params | typeof evalV2Params;
 
+// Review P2 (PR #2): bounds anchor to FACTORY defaults, not the loaded
+// champion. Champion-relative bounds ratchet ±64 outward per accept (a random
+// walk across cycles); factory-anchored bounds keep every parameter within
+// ±64 of a sane value forever. Snapshot before --base is applied below.
+const FACTORY_SCALARS: Record<string, number> = { ...paramsObj };
+const FACTORY_TABLES: Record<string, number[]> = Object.fromEntries(
+  Object.keys(tablesMap).map((k) => [k, Array.from(tablesMap[k])]),
+);
+
 function applyForEngine(
   scalars?: Partial<Record<string, number>>,
   tables?: Partial<Record<string, number[]>>,
@@ -80,26 +89,110 @@ if (BASE) {
 
 const MAX_POSITIONS = arg('max-positions', 400000); // subsample cap (seeded)
 const TIME_BUDGET_MIN = arg('time-budget', 90); // hard stop inside the job timeout
+const TRAIN_CAP = Math.floor(MAX_POSITIONS * 0.8);
+const VALID_CAP = MAX_POSITIONS - TRAIN_CAP;
 
 const rawLines = readFileSync(CORPUS, 'utf8').trim().split('\n');
-// Seeded subsample when the corpus exceeds the cap.
-let lineIdx: number[] = rawLines.map((_, i) => i);
-if (rawLines.length > MAX_POSITIONS) {
-  let s = 0x2545f491;
-  const rnd = () => {
-    s ^= s << 13; s |= 0;
-    s ^= s >>> 17;
-    s ^= s << 5; s |= 0;
-    return (s >>> 0) / 4294967296;
-  };
-  for (let i = rawLines.length - 1; i > 0; i--) {
-    const j = Math.floor(rnd() * (i + 1));
-    [lineIdx[i], lineIdx[j]] = [lineIdx[j], lineIdx[i]];
+
+// Corpus formats:
+//   legacy:  <fen> <wdl>
+//   current: <fen> <wdl> g<gameId>
+// The game id is what lets us split by game: positions in one game share the
+// same result label, so a position-level split leaks validation information.
+const gameByLine = new Int32Array(rawLines.length);
+gameByLine.fill(-1);
+const wdlByLine = new Float64Array(rawLines.length);
+const validLineIndices: number[] = [];
+let validLines = 0;
+let linesWithGame = 0;
+for (let i = 0; i < rawLines.length; i++) {
+  const parts = rawLines[i].split(' ');
+  let game = -1;
+  const last = parts[parts.length - 1];
+  if (last && /^g\d+$/.test(last)) {
+    game = Number(last.slice(1));
+    parts.pop();
   }
-  lineIdx = lineIdx.slice(0, MAX_POSITIONS);
+  const wdl = Number(parts.pop());
+  if (!Number.isFinite(wdl)) continue;
+  gameByLine[i] = game;
+  wdlByLine[i] = wdl;
+  validLineIndices.push(i);
+  validLines++;
+  if (game >= 0) linesWithGame++;
+}
+if (validLines === 0) {
+  console.error(`corpus is empty: ${CORPUS}`);
+  process.exit(1);
+}
+const grouped = linesWithGame === validLines;
+
+// Seeded shuffle used for game assignment and subsampling. Keeps runs
+// reproducible without depending on Math.random().
+let splitSeed = 0x2545f491;
+const rnd = () => {
+  splitSeed ^= splitSeed << 13; splitSeed |= 0;
+  splitSeed ^= splitSeed >>> 17;
+  splitSeed ^= splitSeed << 5; splitSeed |= 0;
+  return (splitSeed >>> 0) / 4294967296;
+};
+function shuffle<T>(a: T[]): void {
+  for (let i = a.length - 1; i > 0; i--) {
+    const j = Math.floor(rnd() * (i + 1));
+    [a[i], a[j]] = [a[j], a[i]];
+  }
 }
 
-const N = lineIdx.length;
+let trainLines: number[] = [];
+let validLinesIdx: number[] = [];
+if (grouped) {
+  const games = new Map<number, number[]>();
+  for (let i = 0; i < rawLines.length; i++) {
+    const g = gameByLine[i];
+    if (g < 0) continue;
+    const bucket = games.get(g);
+    if (bucket) bucket.push(i);
+    else games.set(g, [i]);
+  }
+  const keys = [...games.keys()];
+  shuffle(keys);
+  // Split by GAME count (80/20), not by position count: the point is to hold
+  // out whole games, and every game must land entirely on one side.
+  const targetTrainGames = Math.max(1, Math.min(keys.length - 1, Math.floor(keys.length * 0.8)));
+  const trainGames = new Set<number>();
+  for (const g of keys) {
+    if (trainGames.size >= targetTrainGames) break;
+    trainGames.add(g);
+  }
+  for (const [g, lines] of games) {
+    const target = trainGames.has(g) ? trainLines : validLinesIdx;
+    for (const li of lines) target.push(li);
+  }
+  console.log(
+    `corpus split: ${games.size} games, ${trainGames.size} train / ${games.size - trainGames.size} valid ` +
+      `(grouped by game id; ${trainLines.length} train positions / ${validLinesIdx.length} valid positions before cap)`,
+  );
+} else {
+  // Legacy corpora were written game-by-game, so a contiguous split keeps
+  // whole games together. Warn because we cannot prove the boundary.
+  const ordered = validLineIndices;
+  const splitAt = Math.floor(ordered.length * 0.8);
+  trainLines = ordered.slice(0, splitAt);
+  validLinesIdx = ordered.slice(splitAt);
+  console.log(
+    `corpus split: no game ids (legacy format) — using contiguous game-order split ` +
+      `(${trainLines.length} train / ${validLinesIdx.length} valid positions before cap)`,
+  );
+}
+
+// Cap inside each split. Shuffling after the grouped split preserves the
+// train/valid separation while keeping the position sample unbiased.
+shuffle(trainLines);
+shuffle(validLinesIdx);
+trainLines = trainLines.slice(0, TRAIN_CAP);
+validLinesIdx = validLinesIdx.slice(0, VALID_CAP);
+
+const N = trainLines.length + validLinesIdx.length;
 const cBoard = new Int8Array(128 * N);
 const cStm = new Int8Array(N);
 const cMg = new Int32Array(N);
@@ -117,15 +210,16 @@ const cWdl = new Float64Array(N);
 
 const scratch = newStartPosition();
 let kept = 0;
-for (const li of lineIdx) {
-  const line = rawLines[li];
-  const sp = line.lastIndexOf(' ');
-  const wdl = Number(line.slice(sp + 1));
-  if (!Number.isFinite(wdl)) continue;
+let split = 0;
+function ingest(li: number): void {
+  const parts = rawLines[li].split(' ');
+  const last = parts[parts.length - 1];
+  if (last && /^g\d+$/.test(last)) parts.pop();
+  parts.pop(); // wdl
   try {
-    parseFen(scratch, line.slice(0, sp));
+    parseFen(scratch, parts.join(' '));
   } catch {
-    continue;
+    return;
   }
   cBoard.set(scratch.board, kept * 128);
   cStm[kept] = scratch.stm;
@@ -140,15 +234,26 @@ for (const li of lineIdx) {
   cKingB[kept] = scratch.kingSq[1];
   cNpmW[kept] = scratch.npmCount[0];
   cNpmB[kept] = scratch.npmCount[1];
-  cWdl[kept] = wdl;
+  cWdl[kept] = wdlByLine[li];
   kept++;
 }
+for (const li of trainLines) {
+  ingest(li);
+  split = kept;
+}
+for (const li of validLinesIdx) ingest(li);
 if (kept < 500) {
   console.error(`corpus too small: ${kept} positions`);
   process.exit(1);
 }
-const split = Math.floor(kept * 0.8);
-console.log(`corpus: ${kept} positions (train ${split}, valid ${kept - split}), compact ~${((kept * 173) / 1e6).toFixed(0)}MB`);
+if (split === 0 || split === kept) {
+  console.error(`corpus split produced no ${split === 0 ? 'train' : 'validation'} positions (${kept} kept)`);
+  process.exit(1);
+}
+console.log(
+  `corpus: ${kept} positions (train ${split}, valid ${kept - split}), ` +
+    `source ${validLines} lines, grouped=${grouped}, compact ~${((kept * 173) / 1e6).toFixed(0)}MB`,
+);
 
 function restoreAt(i: number): void {
   scratch.board.set(cBoard.subarray(i * 128, i * 128 + 128));
@@ -195,16 +300,58 @@ const SKIP_SCALARS = new Set([
   'tempo', 'ocbScale', 'mopupEdge', 'mopupClose', 'mopupMargin', 'mopupMaxPhase',
 ]);
 
+// Semantic bounds. Without these the ±64 displacement cap allows nonsense
+// like baseB = -19 (the recovered v2 challenger) or negative passed-pawn
+// bonuses. Terms whose names describe a bonus are non-negative; terms whose
+// names describe a penalty are non-positive.
+const NON_NEGATIVE = new Set([
+  'bishopPairMg', 'bishopPairEg',
+  'passedProtMg', 'passedProtEg', 'rookBehindPasserMg', 'rookBehindPasserEg',
+  'passerKingEnemyW', 'passerKingOurW',
+  'unstoppableBase', 'unstoppablePerRank',
+  'knightOutpostMg', 'knightOutpostEg', 'knightOutpostCenterMg', 'knightOutpostCenterEg',
+  'bishopOutpostMg', 'bishopOutpostEg', 'bishopOutpostCenterMg', 'bishopOutpostCenterEg',
+  'rookOpenMg', 'rookOpenEg', 'rookSemiMg', 'rookSemiEg',
+  'rook7thMg', 'rook7thEg', 'rookBatteryMg', 'rookBatteryEg',
+  'mobNMg', 'mobNEg', 'mobBMg', 'mobBEg', 'mobRMg', 'mobREg', 'mobQMg', 'mobQEg',
+  'baseN', 'baseB', 'baseR', 'baseQ',
+  'pawnThreatMinorMg', 'pawnThreatMinorEg', 'pawnThreatMajorMg', 'pawnThreatMajorEg',
+  'minorThreatRookMg', 'minorThreatRookEg', 'minorThreatQueenMg', 'minorThreatQueenEg',
+  'shieldNear', 'shieldFar', 'shieldClose',
+  'kingAttackNBase', 'kingAttackNPer', 'kingAttackBBase', 'kingAttackBPer',
+  'kingAttackRBase', 'kingAttackRPer', 'kingAttackQBase', 'kingAttackQPer',
+  'kingDangerCap',
+]);
+const NON_POSITIVE = new Set([
+  'doubledMg', 'doubledEg', 'isolatedMg', 'isolatedEg', 'backwardMg', 'backwardEg',
+  'shieldOpenFile', 'shieldOpenExtra', 'shieldOpen',
+]);
+
+function scalarBounds(name: string, def: number): { min: number; max: number } {
+  // Anchor to the factory value (`def` is the current champion when --base is
+  // used — see the FACTORY_* snapshot comment).
+  const f = FACTORY_SCALARS[name] ?? def;
+  let min = f - 64;
+  let max = f + 64;
+  if (NON_NEGATIVE.has(name)) min = 0;
+  if (NON_POSITIVE.has(name)) max = 0;
+  return { min, max };
+}
+
 const tunables: Tunable[] = [];
 for (const k of Object.keys(paramsObj)) {
   if (SKIP_SCALARS.has(k)) continue;
   const def = paramsObj[k];
-  tunables.push({ kind: 'scalar', name: k, step0: 4, min: def - 64, max: def + 64 });
+  const { min, max } = scalarBounds(k, def);
+  tunables.push({ kind: 'scalar', name: k, step0: 4, min, max });
 }
 for (const tName of Object.keys(tablesMap)) {
   for (let r = 1; r <= 6; r++) {
     const def = tablesMap[tName][r];
-    tunables.push({ kind: 'table', name: tName, index: r, step0: 4, min: def - 64, max: def + 64 });
+    // Rank tables are bonuses; rank 0 and 7 are structurally zero.
+    // Factory-anchored max (review P2) — same anti-ratchet as scalarBounds.
+    const fMax = (FACTORY_TABLES[tName]?.[r] ?? def) + 64;
+    tunables.push({ kind: 'table', name: tName, index: r, step0: 4, min: 0, max: fMax });
   }
 }
 console.log(`tunables: ${tunables.length}`);
@@ -222,6 +369,20 @@ function getTableValue(name: string, index: number): number {
   return tablesMap[name][index];
 }
 
+// Rank tables are monotone bonuses (rank 1 <= ... <= rank 6). Each trial is
+// clamped to the current neighbours, so any update preserves monotonicity for
+// the rest of the sweep. Static per-rank bounds still apply.
+function effectiveBounds(t: Tunable): { min: number; max: number } {
+  let { min, max } = t;
+  if (t.kind === 'table') {
+    const r = t.index!;
+    if (r > 1) min = Math.max(min, getTableValue(t.name, r - 1));
+    if (r < 6) max = Math.min(max, getTableValue(t.name, r + 1));
+    if (max < min) max = min;
+  }
+  return { min, max };
+}
+
 let trials = 0;
 function candidateLoss(): number {
   if (EVAL === 'v3') clearEvalCaches();
@@ -234,11 +395,12 @@ function candidateLoss(): number {
 const startTrain = lossOver(0, split);
 const startValid = lossOver(split, kept);
 console.log(`baseline: train MSE ${startTrain.toFixed(6)}  valid MSE ${startValid.toFixed(6)}`);
+if (BASE) console.log(`tuning continues from the loaded champion (${BASE}); factory defaults are only the final diff reference`);
 
-resetForEngine();
-if (EVAL === 'v3') clearEvalCaches();
-
-let best = lossOver(0, split);
+// Intentionally do NOT reset here. Coordinate descent must continue from the
+// champion loaded via --base; resetting would silently discard every accepted
+// improvement and make the champion/challenger loop non-compounding.
+let best = startTrain;
 const improvedKeys = new Set<string>();
 
 function snapshotParams(): { scalars: Record<string, number>; tables: Record<string, number[]> } {
@@ -255,7 +417,9 @@ function restoreParams(s: { scalars: Record<string, number>; tables: Record<stri
 
 // Early stopping on VALIDATION loss: keep the best-valid config, abort after
 // two consecutive sweeps that fail to improve it (train-only gains = overfit).
-let bestValid = lossOver(split, kept);
+// The champion is the initial best-valid candidate, so a challenger that never
+// beats it is written back unchanged.
+let bestValid = startValid;
 let bestSnap = snapshotParams();
 let validStagnation = 0;
 
@@ -275,12 +439,13 @@ for (let sweep = 0; sweep < MAX_SWEEPS && Date.now() - t0 < budgetMs; sweep++) {
     const base = get();
     let lastGood = base;
     let anyImproved = false;
+    const { min, max } = effectiveBounds(t);
 
     for (const dir of [1, -1] as const) {
       set(lastGood); // resume from the best value found so far
       let v = lastGood + dir * step;
       while (true) {
-        if (v < t.min || v > t.max) break;
+        if (v < min || v > max) break;
         set(v);
         const l = candidateLoss();
         if (l < best - 1e-9) {
@@ -328,8 +493,14 @@ console.log(`improved params: ${improvedKeys.size} of ${tunables.length}`);
 {
   const sp = newStartPosition();
   const e = evalPos(sp);
-  if (Math.abs(e) >= 60) console.warn(`WARNING: startpos eval ${e} outside ±60 (test npm test will fail)`);
-  else console.log(`guard: startpos eval ${e} OK (±60)`);
+  // Review P1 (PR #2): this guard was warn-only and nothing ran `npm test`
+  // before the publish step, so an accepted challenger could silently break
+  // the suite on main. Fail the tuner instead; tune-session aborts on exit != 0.
+  if (Math.abs(e) >= 60) {
+    console.warn(`FATAL: startpos eval ${e} outside ±60 — refusing to write params (npm test would fail on main)`);
+    process.exit(1);
+  }
+  console.log(`guard: startpos eval ${e} OK (±60)`);
 }
 
 // --- output --------------------------------------------------------------------------

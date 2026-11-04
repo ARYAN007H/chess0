@@ -3,9 +3,12 @@
  *
  * Plays v3-vs-v3 self-play games at fixed shallow depth from book openings,
  * records quiet positions (side to move not in check) with the final game
- * result as the target, and writes `fen <wdl>` lines to data/tuning-corpus.txt.
+ * result as the target, and writes `fen <wdl> g<gameId>` lines to
+ * data/tuning-corpus.txt. The game id lets the tuner split train/validation by
+ * game instead of by position (positions from one game share a result label).
  *
  *   npx tsx scripts/gen-corpus.ts [--games 1000] [--depth 5] [--out data/tuning-corpus.txt]
+ *                                 [--game-offset N]
  */
 
 import { newStartPosition, parseFen, makeMove } from '../src/engine/position';
@@ -26,6 +29,12 @@ const arg = (name: string, def: number): number => {
 };
 const GAMES = Math.max(1, arg('games', 1000));
 const DEPTH = Math.max(2, arg('depth', 5));
+// Matrix shards generate games 1..GAMES independently; an offset keeps the
+// merged corpus's game ids disjoint so a grouped 80/20 split is still valid.
+// Review P2 (PR #2): offsets are collision-free only while total input games
+// stay below ~4M (unreachable today: cycles use <=12k games). Revisit if the
+// corpus scale ever approaches that.
+const GAME_OFFSET = Math.max(0, arg('game-offset', 0));
 const OUT = (() => {
   const i = process.argv.indexOf('--out');
   return i >= 0 && process.argv[i + 1] ? process.argv[i + 1] : 'data/tuning-corpus.txt';
@@ -84,7 +93,7 @@ function sampleOpening(plies: number): string[] {
     if (candidates.length === 0) break;
     let total = 0;
     for (const c of candidates) total += c.weight;
-    let roll = Math.random() * total;
+    let roll = rnd() * total;
     let picked = candidates[candidates.length - 1];
     for (const c of candidates) {
       roll -= c.weight;
@@ -100,9 +109,9 @@ function sampleOpening(plies: number): string[] {
   return uci;
 }
 
-interface Recorded { fen: string; wdl: number }
+interface Recorded { fen: string; wdl: number; game: number }
 
-function playGame(): Recorded[] {
+function playGame(gameId: number): Recorded[] {
   const pos = newStartPosition();
   for (const uci of sampleOpening(6)) {
     const eng = new Engine();
@@ -132,7 +141,7 @@ function playGame(): Recorded[] {
 
     // Record quiet positions with some context
     if (ply >= 8 && !inCheckOf(pos, pos.stm)) {
-      recorded.push({ fen: toFenLine(pos), wdl: -1 }); // wdl filled after the game
+      recorded.push({ fen: toFenLine(pos), wdl: -1, game: gameId }); // wdl filled after the game
     }
 
     const r = searchForCorpus(pos, { depth: DEPTH });
@@ -164,8 +173,8 @@ function toFenLine(pos: Position): string {
 const t0 = Date.now();
 const lines: string[] = [];
 for (let g = 1; g <= GAMES; g++) {
-  const recs = playGame();
-  for (const r of recs) lines.push(`${r.fen} ${r.wdl}`);
+  const recs = playGame(GAME_OFFSET + g);
+  for (const r of recs) lines.push(`${r.fen} ${r.wdl} g${r.game}`);
   if (g % 100 === 0) {
     const rate = (Date.now() - t0) / 1000 / g;
     console.log(`game ${g}/${GAMES}  positions=${lines.length}  ${rate.toFixed(2)}s/game  eta ${((GAMES - g) * rate / 60).toFixed(1)}min`);
