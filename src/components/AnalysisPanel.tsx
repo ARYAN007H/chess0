@@ -76,7 +76,7 @@ export function AnalysisPanel({
       {/* Full engine review: progress / trigger */}
       {reviewProgress ? (
         <div className="rounded-lg border border-sky-300 bg-sky-50 px-3 py-2 dark:border-sky-400/30 dark:bg-sky-400/10">
-          <div className="mb-1.5 flex items-center justify-between text-[11px] font-semibold text-sky-800 dark:text-sky-200">
+          <div className="mb-1.5 flex items-center justify-between text-2xs font-semibold text-sky-800 dark:text-sky-200">
             <span>Engine reviewing game…</span>
             <span className="font-mono tabular-nums">
               {reviewProgress.done}/{reviewProgress.total}
@@ -101,38 +101,36 @@ export function AnalysisPanel({
         )
       )}
 
-      {/* Move Coach / Classification Card */}
-      <div className="rounded-lg border border-stone-200 bg-stone-50 p-3 dark:border-white/10 dark:bg-[#1f1e1b]">
+      {/* Move coach / classification card */}
+      <div className="panel-sunken rounded-lg p-3">
         {displayedMove && moveMeta ? (
           <div className="space-y-2">
             <div className="flex items-center justify-between gap-2">
               <div className="flex items-center gap-2.5">
                 <span
-                  className="flex h-6 min-w-6 items-center justify-center rounded-md px-1.5 font-mono text-xs font-extrabold text-white shadow-xs"
+                  className="flex h-6 min-w-6 items-center justify-center rounded-md px-1.5 font-mono text-xs font-extrabold text-white shadow-card"
                   style={{ backgroundColor: moveMeta.badgeBg }}
                 >
                   {moveMeta.symbol}
                 </span>
                 <div>
-                  <div className="flex items-center gap-1.5 text-sm font-bold text-stone-900 dark:text-white">
+                  <div className="flex items-center gap-1.5 text-sm font-bold text-ink">
                     <span>
                       {Math.ceil(displayedMove.ply / 2)}
                       {displayedMove.ply % 2 === 1 ? '.' : '…'} {displayedMove.san}
                     </span>
-                    <span className="text-stone-400">·</span>
+                    <span className="text-ink-3">·</span>
                     <span style={{ color: moveMeta.badgeBg }}>{moveMeta.label}</span>
                   </div>
-                  <p className="text-[11px] text-stone-500 dark:text-[#a09e99]">
-                    {moveMeta.description}
-                  </p>
+                  <p className="text-xs text-ink-3">{moveMeta.description}</p>
                 </div>
               </div>
 
               <div className="text-right font-mono">
-                <div className="text-xs font-bold tabular-nums text-stone-900 dark:text-white">
+                <div className="text-xs font-bold tabular-nums text-ink">
                   {formatEvalText(displayedMove.analysis.evalWhiteCp, displayedMove.analysis.evalWhiteMate)}
                 </div>
-                <div className="text-[10px] tabular-nums text-stone-500 dark:text-[#a09e99]">
+                <div className="text-2xs tabular-nums text-ink-3">
                   {displayedMove.analysis.moveAccuracy.toFixed(0)}% acc
                 </div>
               </div>
@@ -144,20 +142,20 @@ export function AnalysisPanel({
               (displayedMove.analysis.classification === 'inaccuracy' ||
                 displayedMove.analysis.classification === 'mistake' ||
                 displayedMove.analysis.classification === 'blunder') && (
-                <div className="flex items-center justify-between rounded-md border border-stone-200 bg-white px-2.5 py-1.5 text-xs dark:border-white/10 dark:bg-[#2a2926]">
-                  <span className="text-stone-600 dark:text-[#d5d4d0]">
+                <div className="flex items-center justify-between rounded-md border border-line bg-surface px-2.5 py-1.5 text-xs">
+                  <span className="text-ink-2">
                     Best was{' '}
-                    <strong className="font-mono font-bold text-[#5d8c30] dark:text-[#95c95e]">
+                    <strong className="font-mono font-bold text-accent-text">
                       {displayedMove.analysis.bestAlternativeSan}
                     </strong>{' '}
-                    <span className="font-mono text-[11px] text-stone-400">
+                    <span className="font-mono text-2xs text-ink-3">
                       (−{(displayedMove.analysis.cpLoss / 100).toFixed(2)})
                     </span>
                   </span>
                   <button
                     type="button"
                     onClick={onAnalyzeDeeper}
-                    className="font-bold text-[#5d8c30] hover:underline dark:text-[#95c95e]"
+                    className="font-bold text-accent-text hover:underline"
                   >
                     Inspect 3 Lines
                   </button>
@@ -165,12 +163,12 @@ export function AnalysisPanel({
               )}
           </div>
         ) : (
-          <div className="flex items-center justify-between text-xs text-stone-500 dark:text-[#a09e99]">
+          <div className="flex items-center justify-between text-xs text-ink-3">
             <span>Make a move or click any ply in the move list to inspect move quality.</span>
             <button
               type="button"
               onClick={onAnalyzeDeeper}
-              className="shrink-0 font-bold text-[#5d8c30] hover:underline dark:text-[#95c95e]"
+              className="shrink-0 font-bold text-accent-text hover:underline"
             >
               Scan Position
             </button>
@@ -178,15 +176,15 @@ export function AnalysisPanel({
         )}
       </div>
 
-      {/* Interactive SVG Evaluation Timeline Graph */}
+      {/* Interactive SVG evaluation timeline graph */}
       <div>
-        <div className="mb-1 flex items-center justify-between text-[10px] font-bold uppercase tracking-wider text-stone-500 dark:text-[#9e9c98]">
-          <span>Evaluation Graph</span>
-          <span className="font-mono tabular-nums">
+        <div className="mb-1 flex items-center justify-between">
+          <span className="micro-label">Evaluation Graph</span>
+          <span className="font-mono text-2xs tabular-nums text-ink-3">
             Ply {activePly}/{history.length}
           </span>
         </div>
-        <div className="relative overflow-hidden rounded-lg border border-stone-300 bg-[#1f1e1b] dark:border-white/10">
+        <div className="relative overflow-hidden rounded-lg border border-line bg-[#1f1e1b]">
           <svg
             viewBox={`0 0 ${width} ${height}`}
             className="block h-20 w-full cursor-pointer"
@@ -233,56 +231,52 @@ export function AnalysisPanel({
         </div>
       </div>
 
-      {/* Per-Side Accuracy Cards */}
+      {/* Per-side accuracy cards */}
       <div className="grid grid-cols-2 gap-2">
-        <div className="rounded-lg border border-stone-200 bg-stone-50 px-3 py-2 dark:border-white/10 dark:bg-[#1f1e1b]">
-          <div className="text-[10px] font-bold uppercase tracking-wider text-stone-500 dark:text-[#9e9c98]">
-            ♔ White Accuracy
-          </div>
-          <div className="mt-0.5 font-mono text-lg font-black tabular-nums text-stone-900 dark:text-white">
+        <div className="panel-sunken rounded-lg px-3 py-2">
+          <div className="micro-label">♔ White Accuracy</div>
+          <div className="mt-0.5 font-mono text-lg font-black tabular-nums text-ink">
             {summary.whiteAccuracy !== null ? `${summary.whiteAccuracy.toFixed(1)}%` : '—'}
           </div>
         </div>
-        <div className="rounded-lg border border-stone-200 bg-stone-50 px-3 py-2 dark:border-white/10 dark:bg-[#1f1e1b]">
-          <div className="text-[10px] font-bold uppercase tracking-wider text-stone-500 dark:text-[#9e9c98]">
-            ♚ Black Accuracy
-          </div>
-          <div className="mt-0.5 font-mono text-lg font-black tabular-nums text-stone-900 dark:text-white">
+        <div className="panel-sunken rounded-lg px-3 py-2">
+          <div className="micro-label">♚ Black Accuracy</div>
+          <div className="mt-0.5 font-mono text-lg font-black tabular-nums text-ink">
             {summary.blackAccuracy !== null ? `${summary.blackAccuracy.toFixed(1)}%` : '—'}
           </div>
         </div>
       </div>
 
-      {/* Classification Breakdown Table */}
-      <div className="overflow-hidden rounded-lg border border-stone-200 dark:border-white/10">
+      {/* Classification breakdown table */}
+      <div className="overflow-hidden rounded-lg border border-line">
         <table className="w-full text-xs">
           <thead>
-            <tr className="border-b border-stone-200 bg-stone-100 text-[10px] font-bold uppercase tracking-wider text-stone-500 dark:border-white/10 dark:bg-[#1f1e1b] dark:text-[#9e9c98]">
+            <tr className="border-b border-line bg-sunken text-2xs font-bold tracking-wider uppercase text-ink-3">
               <th className="py-1.5 pl-2.5 text-left">Move Type</th>
               <th className="py-1.5 text-center">White</th>
               <th className="py-1.5 pr-2.5 text-center">Black</th>
             </tr>
           </thead>
-          <tbody className="divide-y divide-stone-200/60 dark:divide-white/5">
+          <tbody className="divide-y divide-line">
             {BREAKDOWN_ORDER.map((cl) => {
               const meta = CLASSIFICATION_META[cl];
               const wCount = summary.counts.white[cl];
               const bCount = summary.counts.black[cl];
               return (
-                <tr key={cl} className="hover:bg-stone-100/60 dark:hover:bg-white/[0.03]">
-                  <td className="flex items-center gap-2 py-1 pl-2.5 font-semibold text-stone-700 dark:text-[#d5d4d0]">
+                <tr key={cl} className="hover:bg-black/[0.03] dark:hover:bg-white/[0.03]">
+                  <td className="flex items-center gap-2 py-1 pl-2.5 font-semibold text-ink-2">
                     <span
-                      className="inline-flex h-4 w-5 items-center justify-center rounded text-[10px] font-extrabold text-white"
+                      className="inline-flex h-4 w-5 items-center justify-center rounded text-2xs font-extrabold text-white"
                       style={{ backgroundColor: meta.badgeBg }}
                     >
                       {meta.symbol}
                     </span>
                     <span>{meta.label}</span>
                   </td>
-                  <td className="py-1 text-center font-mono font-bold tabular-nums text-stone-800 dark:text-white">
+                  <td className="py-1 text-center font-mono font-bold tabular-nums text-ink">
                     {wCount}
                   </td>
-                  <td className="py-1 pr-2.5 text-center font-mono font-bold tabular-nums text-stone-800 dark:text-white">
+                  <td className="py-1 pr-2.5 text-center font-mono font-bold tabular-nums text-ink">
                     {bCount}
                   </td>
                 </tr>

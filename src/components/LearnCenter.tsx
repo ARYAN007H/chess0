@@ -58,28 +58,20 @@ export function LearnCenter({
   ).length;
 
   return (
-    <div className="space-y-3 p-3.5">
-      {/* Sub-navigation: Active Lesson vs All 16 Courses */}
-      <div className="grid grid-cols-2 gap-1 rounded-lg bg-stone-200/80 p-1 dark:bg-[#1f1e1b]">
+    <div className="space-y-3">
+      {/* Sub-navigation: active lesson vs courses */}
+      <div className="seg grid grid-cols-2">
         <button
           type="button"
           onClick={() => setViewTab('lesson')}
-          className={`rounded-md py-1.5 text-xs font-extrabold transition ${
-            viewTab === 'lesson'
-              ? 'bg-white text-stone-900 shadow-xs dark:bg-[#302e2b] dark:text-white'
-              : 'text-stone-600 hover:text-stone-900 dark:text-[#989795] dark:hover:text-white'
-          }`}
+          className={`seg-btn py-1.5 ${viewTab === 'lesson' ? 'seg-btn-active' : ''}`}
         >
           Active Lesson
         </button>
         <button
           type="button"
           onClick={() => setViewTab('courses')}
-          className={`rounded-md py-1.5 text-xs font-extrabold transition ${
-            viewTab === 'courses'
-              ? 'bg-white text-stone-900 shadow-xs dark:bg-[#302e2b] dark:text-white'
-              : 'text-stone-600 hover:text-stone-900 dark:text-[#989795] dark:hover:text-white'
-          }`}
+          className={`seg-btn py-1.5 ${viewTab === 'courses' ? 'seg-btn-active' : ''}`}
         >
           16 Courses ({TOTAL_ACADEMY_LESSONS})
         </button>
@@ -87,23 +79,21 @@ export function LearnCenter({
 
       {viewTab === 'lesson' ? (
         <div className="space-y-3">
-          {/* Course Header & Progress Bar */}
-          <div className="rounded-xl bg-stone-100 p-3 dark:bg-[#1f1e1b]">
+          {/* Course header & progress bar */}
+          <div className="panel-sunken p-3">
             <div className="flex items-center justify-between gap-2">
-              <span className="rounded bg-[#81b64c]/20 px-2 py-0.5 text-[10px] font-extrabold tracking-wider text-[#629924] uppercase dark:text-[#81b64c]">
+              <span className="rounded bg-accent/15 px-2 py-0.5 text-2xs font-extrabold tracking-wider text-accent-text uppercase">
                 {activeModule.difficulty} · {activeModule.category}
               </span>
-              <span className="font-mono text-xs font-bold tabular-nums text-stone-500 dark:text-[#989795]">
+              <span className="font-mono text-2xs font-bold tabular-nums text-ink-3">
                 Lesson {activeStepIndex + 1} / {activeModule.steps.length}
               </span>
             </div>
-            <div className="mt-1.5 text-xs font-extrabold text-stone-800 dark:text-white">
-              {activeModule.title}
-            </div>
-            {/* Progress Bar */}
-            <div className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-stone-200 dark:bg-[#302e2b]">
+            <div className="mt-1.5 text-xs font-extrabold text-ink">{activeModule.title}</div>
+            {/* Progress bar */}
+            <div className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-[var(--seg)]">
               <div
-                className="h-full bg-[#81b64c] transition-all duration-300"
+                className="h-full bg-accent transition-all duration-300"
                 style={{
                   width: `${Math.max(5, Math.round((completedInActiveMod / activeModule.steps.length) * 100))}%`,
                 }}
@@ -111,19 +101,15 @@ export function LearnCenter({
             </div>
           </div>
 
-          {/* Interactive Lesson Challenge Card */}
-          <div className="space-y-3 rounded-xl border border-stone-200/90 bg-stone-50/80 p-3.5 dark:border-white/10 dark:bg-[#302e2b]">
+          {/* Interactive lesson challenge card */}
+          <div className="panel space-y-3 p-3">
             <div>
-              <h4 className="text-sm font-black text-stone-900 dark:text-white">
-                {currentStep.title}
-              </h4>
-              <p className="mt-1 text-xs leading-relaxed text-stone-600 dark:text-[#bababa]">
-                {currentStep.prompt}
-              </p>
+              <h4 className="text-sm font-black text-ink">{currentStep.title}</h4>
+              <p className="mt-1 text-xs leading-relaxed text-ink-2">{currentStep.prompt}</p>
             </div>
 
             {(showTip || lessonStatus === 'wrong') && lessonStatus !== 'completed' && (
-              <div className="rounded-lg border border-amber-500/40 bg-amber-500/10 p-2.5 text-xs text-amber-800 dark:text-amber-200">
+              <div className="rounded-lg border border-amber-500/40 bg-amber-500/10 p-2.5 text-xs text-amber-700 dark:text-amber-200">
                 <strong className="font-extrabold">💡 Coach Viktor’s Tip:</strong>{' '}
                 {currentStep.coachTip}
               </div>
@@ -135,7 +121,7 @@ export function LearnCenter({
                   <button
                     type="button"
                     onClick={() => setShowTip(true)}
-                    className="rounded-lg bg-stone-200/90 py-2 text-xs font-extrabold text-stone-800 transition hover:bg-stone-300 dark:bg-[#1f1e1b] dark:text-white dark:hover:bg-[#262522]"
+                    className="btn-quiet py-2 text-xs"
                   >
                     💡 Coach Tip
                   </button>
@@ -143,7 +129,7 @@ export function LearnCenter({
                   <button
                     type="button"
                     onClick={() => onShowArrowHint(currentStep.correctUci[0])}
-                    className="rounded-lg bg-amber-500/20 py-2 text-xs font-extrabold text-amber-700 ring-1 ring-amber-500/40 transition hover:bg-amber-500/30 dark:text-amber-300"
+                    className="rounded-md bg-amber-500/20 py-2 text-xs font-extrabold text-amber-700 ring-1 ring-amber-500/40 transition hover:bg-amber-500/30 dark:text-amber-300"
                   >
                     🎯 Show Move Arrow
                   </button>
@@ -152,9 +138,9 @@ export function LearnCenter({
                 <button
                   type="button"
                   onClick={goNextStep}
-                  className="rounded-lg bg-stone-200/90 py-2 text-xs font-extrabold text-stone-700 transition hover:bg-stone-300 dark:bg-[#1f1e1b] dark:text-[#bababa] dark:hover:text-white"
+                  className="btn-quiet py-2 text-xs"
                 >
-                  Skip Lesson →
+                  Skip Lesson
                 </button>
               </div>
             )}
@@ -167,7 +153,7 @@ export function LearnCenter({
                 <button
                   type="button"
                   onClick={() => onShowArrowHint(currentStep.correctUci[0])}
-                  className="shrink-0 rounded-md bg-stone-200 px-2.5 py-1 text-[11px] font-extrabold text-stone-800 dark:bg-[#1f1e1b] dark:text-white"
+                  className="shrink-0 rounded-md border border-line bg-sunken px-2.5 py-1 text-2xs font-extrabold text-ink-2"
                 >
                   🎯 Show Arrow
                 </button>
@@ -175,34 +161,30 @@ export function LearnCenter({
             )}
 
             {lessonStatus === 'completed' && (
-              <div className="space-y-2.5 rounded-lg border border-[#81b64c]/50 bg-[#81b64c]/15 p-3">
-                <div className="text-xs font-black text-[#4e7822] dark:text-[#a3d160]">
-                  ★ Lesson Mastered!
-                </div>
-                <p className="text-xs leading-relaxed text-stone-700 dark:text-[#e4e4e0]">
-                  {currentStep.successNote}
-                </p>
+              <div className="space-y-2.5 rounded-lg border border-accent/50 bg-accent/15 p-3">
+                <div className="text-xs font-black text-accent-text">★ Lesson Mastered!</div>
+                <p className="text-xs leading-relaxed text-ink">{currentStep.successNote}</p>
                 <button
                   type="button"
                   onClick={goNextStep}
-                  className="w-full rounded-lg bg-[#81b64c] py-2.5 text-xs font-black text-white shadow-[0_3px_0_#537a28] transition hover:bg-[#8ec356]"
+                  className="btn-primary w-full py-2.5 text-xs font-black"
                 >
-                  Next Lesson →
+                  Next Lesson
                 </button>
               </div>
             )}
           </div>
 
-          {/* Step Strip for Current Course */}
+          {/* Step strip for current course */}
           <div>
-            <div className="mb-1.5 flex items-center justify-between text-[10px] font-bold tracking-wider text-stone-400 uppercase dark:text-[#7c7a77]">
-              <span>Course Lessons ({activeModule.steps.length})</span>
+            <div className="mb-1.5 flex items-center justify-between">
+              <span className="micro-label">Course Lessons ({activeModule.steps.length})</span>
               <button
                 type="button"
                 onClick={() => setViewTab('courses')}
-                className="font-bold text-[#81b64c] hover:underline"
+                className="text-2xs font-bold text-accent-text hover:underline"
               >
-                Switch Course →
+                Switch Course
               </button>
             </div>
             <div className="scroll-thin flex max-h-24 flex-wrap gap-1 overflow-y-auto pr-1">
@@ -217,12 +199,12 @@ export function LearnCenter({
                       setShowTip(false);
                       onStartLesson(activeModule.id, idx);
                     }}
-                    className={`rounded-md px-2 py-1 font-mono text-[10px] font-bold transition ${
+                    className={`rounded-md px-2 py-1 font-mono text-2xs font-bold transition ${
                       active
-                        ? 'bg-[#81b64c] text-white'
+                        ? 'bg-accent text-on-accent'
                         : done
-                          ? 'bg-[#81b64c]/20 text-[#81b64c]'
-                          : 'bg-stone-100 text-stone-600 hover:bg-stone-200 dark:bg-[#1f1e1b] dark:text-[#bababa] dark:hover:bg-[#302e2b]'
+                          ? 'bg-accent/15 text-accent-text'
+                          : 'border border-line bg-sunken text-ink-2 hover:bg-raised-hover'
                     }`}
                   >
                     {done ? '✓' : ''}
@@ -234,7 +216,7 @@ export function LearnCenter({
           </div>
         </div>
       ) : (
-        /* BROWSE ALL 16 COURSES & 432 LESSONS VIEW */
+        /* Browse all courses & lessons view */
         <div className="space-y-2.5">
           <div className="flex flex-wrap items-center gap-1">
             {(['All', 'Beginner', 'Intermediate', 'Advanced', 'Master'] as const).map((track) => (
@@ -242,10 +224,10 @@ export function LearnCenter({
                 key={track}
                 type="button"
                 onClick={() => setSelectedTrack(track)}
-                className={`rounded-md px-2.5 py-1 text-[11px] font-extrabold transition ${
+                className={`rounded-md px-2.5 py-1 text-2xs font-extrabold transition ${
                   selectedTrack === track
-                    ? 'bg-[#81b64c] text-white'
-                    : 'bg-stone-100 text-stone-600 hover:bg-stone-200 dark:bg-[#1f1e1b] dark:text-[#bababa]'
+                    ? 'bg-accent text-on-accent'
+                    : 'border border-line bg-sunken text-ink-2'
                 }`}
               >
                 {track}
@@ -258,7 +240,7 @@ export function LearnCenter({
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
             placeholder="Search 16 courses & 432 lessons (e.g. Sicilian, Fork, Endgame)…"
-            className="w-full rounded-lg border border-stone-300 bg-white px-2.5 py-1.5 text-xs text-stone-800 placeholder:text-stone-400 focus:border-[#81b64c] focus:outline-none dark:border-white/10 dark:bg-[#1f1e1b] dark:text-white"
+            className="field"
           />
 
           <div className="scroll-thin max-h-72 space-y-2 overflow-y-auto pr-1">
@@ -279,21 +261,17 @@ export function LearnCenter({
                   }}
                   className={`block w-full rounded-xl border p-3 text-left transition ${
                     isCurrentMod
-                      ? 'border-[#81b64c] bg-[#81b64c]/15'
-                      : 'border-stone-200/80 bg-stone-50/70 hover:border-stone-300 dark:border-white/5 dark:bg-[#1f1e1b] dark:hover:bg-[#302e2b]'
+                      ? 'border-accent bg-accent/15'
+                      : 'border-line bg-sunken hover:border-line-strong'
                   }`}
                 >
                   <div className="flex items-center justify-between gap-2">
-                    <span className="text-xs font-extrabold text-stone-900 dark:text-white">
-                      {mod.title}
-                    </span>
-                    <span className="shrink-0 rounded bg-stone-200/70 px-1.5 py-0.5 font-mono text-[10px] font-bold tabular-nums text-stone-700 dark:bg-[#302e2b] dark:text-[#bababa]">
+                    <span className="text-xs font-extrabold text-ink">{mod.title}</span>
+                    <span className="shrink-0 rounded border border-line bg-surface px-1.5 py-0.5 font-mono text-2xs font-bold tabular-nums text-ink-2">
                       {completedInMod}/{mod.steps.length} · {mod.difficulty}
                     </span>
                   </div>
-                  <p className="mt-1 text-[11px] text-stone-500 dark:text-[#989795]">
-                    {mod.summary}
-                  </p>
+                  <p className="mt-1 text-2xs text-ink-3">{mod.summary}</p>
                 </button>
               );
             })}
@@ -303,4 +281,3 @@ export function LearnCenter({
     </div>
   );
 }
-

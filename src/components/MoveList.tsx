@@ -46,7 +46,7 @@ export function MoveList({ history, activePly, onSelectPly, onCopyFen }: MoveLis
   };
 
   const renderCell = (entry?: HistoryEntry) => {
-    if (!entry) return <td className="w-[44%] py-0.5 px-2" />;
+    if (!entry) return <td className="w-[44%] px-2 py-0.5" />;
     const isSelected = activePly === entry.ply;
     const meta = CLASSIFICATION_META[entry.analysis.classification];
     const showBadge =
@@ -59,21 +59,21 @@ export function MoveList({ history, activePly, onSelectPly, onCopyFen }: MoveLis
       entry.analysis.classification === 'book';
 
     return (
-      <td className="w-[44%] py-0.5 px-1">
+      <td className="w-[44%] px-1 py-0.5">
         <button
           type="button"
           onClick={() => onSelectPly(entry.ply)}
           className={`flex w-full items-center justify-between rounded px-2 py-0.5 text-left font-mono text-xs transition ${
             isSelected
-              ? 'bg-[#81b64c]/20 font-bold text-[#6fa13d] ring-1 ring-[#81b64c]/50 dark:bg-[#81b64c]/25 dark:text-[#b2e07c]'
-              : 'font-medium text-stone-700 hover:bg-stone-200/70 dark:text-[#d5d4d0] dark:hover:bg-white/5'
+              ? 'bg-accent/15 font-bold text-accent-text ring-1 ring-accent/40'
+              : 'font-medium text-ink-2 hover:bg-[var(--seg)] hover:text-ink'
           }`}
         >
           <span className="truncate">{entry.san}</span>
           {showBadge && (
             <span
               title={meta.label}
-              className="ml-1.5 shrink-0 font-mono text-[10px] font-extrabold"
+              className="ml-1.5 shrink-0 font-mono text-2xs font-extrabold"
               style={{ color: meta.badgeBg }}
             >
               {meta.symbol}
@@ -85,25 +85,25 @@ export function MoveList({ history, activePly, onSelectPly, onCopyFen }: MoveLis
   };
 
   return (
-    <div className="rounded-lg border border-stone-200 bg-stone-50 dark:border-white/10 dark:bg-[#1f1e1b]">
-      <div className="flex items-center justify-between border-b border-stone-200 px-3 py-1.5 dark:border-white/10">
-        <span className="text-[10px] font-extrabold uppercase tracking-wider text-stone-500 dark:text-[#9e9c98]">
+    <div className="panel-sunken rounded-lg">
+      <div className="flex items-center justify-between border-b border-line px-3 py-1.5">
+        <span className="micro-label">
           Moves · {history.length} {history.length === 1 ? 'ply' : 'plies'}
         </span>
-        <div className="flex items-center gap-2 text-[11px] font-bold">
+        <div className="flex items-center gap-2 text-2xs font-bold">
           <button
             type="button"
             onClick={handleCopyFen}
-            className="text-stone-500 transition hover:text-[#5d8c30] dark:text-[#9e9c98] dark:hover:text-[#95c95e]"
+            className="text-ink-3 transition hover:text-accent-text"
           >
             {fenCopied ? '✓ FEN' : 'FEN'}
           </button>
-          <span className="text-stone-300 dark:text-white/15">·</span>
+          <span className="text-line-strong">·</span>
           <button
             type="button"
             onClick={copyPgn}
             disabled={history.length === 0}
-            className="text-stone-500 transition hover:text-[#5d8c30] disabled:opacity-40 dark:text-[#9e9c98] dark:hover:text-[#95c95e]"
+            className="text-ink-3 transition hover:text-accent-text disabled:opacity-40"
           >
             {pgnCopied ? '✓ PGN' : 'PGN'}
           </button>
@@ -112,7 +112,7 @@ export function MoveList({ history, activePly, onSelectPly, onCopyFen }: MoveLis
 
       <div ref={containerRef} className="scroll-thin max-h-36 overflow-y-auto p-1">
         {rows.length === 0 ? (
-          <p className="py-4 text-center text-[11px] text-stone-400 dark:text-[#7c7a75]">
+          <p className="py-4 text-center text-2xs text-ink-3">
             Make a move on the board to begin recording notation.
           </p>
         ) : (
@@ -121,9 +121,9 @@ export function MoveList({ history, activePly, onSelectPly, onCopyFen }: MoveLis
               {rows.map((row, idx) => (
                 <tr
                   key={row.no}
-                  className={idx % 2 === 1 ? 'bg-stone-100/60 dark:bg-white/[0.02]' : ''}
+                  className={idx % 2 === 1 ? 'bg-black/[0.03] dark:bg-white/[0.02]' : ''}
                 >
-                  <td className="w-[12%] py-0.5 pl-2 pr-1 text-right font-mono text-[11px] tabular-nums text-stone-400 dark:text-[#7c7a75]">
+                  <td className="w-[12%] py-0.5 pr-1 pl-2 text-right font-mono text-2xs tabular-nums text-ink-3">
                     {row.no}.
                   </td>
                   {renderCell(row.white)}

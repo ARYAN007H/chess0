@@ -2,9 +2,126 @@
 
 @custom-variant dark (&:where(.dark, .dark *));
 
+/* ---------------------------------------------------------------------------
+   Chess0 design tokens — one system, two deliberate themes.
+   Raw vars flip on .dark; @theme inline maps them to Tailwind utilities
+   (bg-surface, text-ink-2, border-line, text-accent-text, shadow-card, …).
+   Semantic status colors (amber = warning, rose = error, sky = engine review)
+   stay as Tailwind's stock families and are used consistently for meaning.
+--------------------------------------------------------------------------- */
+
+:root {
+  /* Surfaces */
+  --bg: #f2f0ea; /* page background */
+  --surface: #ffffff; /* dock, cards, form fields */
+  --sunken: #f0eee7; /* inset panels, footer, stat strips */
+  --raised: #ffffff; /* buttons sitting on sunken surfaces */
+  --raised-hover: #ebe9e2;
+
+  /* Dark chrome — the sidebar stays dark in both themes */
+  --chrome: #21201d;
+  --chrome-raised: #2c2b28;
+  --chrome-raised-hover: #383632;
+  --chrome-ink: #c4c1bb;
+  --chrome-ink-3: #8b8984;
+  --chrome-accent: #9ccf68;
+
+  /* Lines */
+  --line: rgb(28 25 18 / 0.09);
+  --line-strong: rgb(28 25 18 / 0.16);
+
+  /* Ink */
+  --ink: #26241f;
+  --ink-2: #57534a;
+  --ink-3: #7a746b;
+
+  /* Championship green */
+  --accent: #81b64c;
+  --accent-hover: #75a941;
+  --accent-deep: #537a28; /* 3-D button edge */
+  --accent-text: #4e7a2a; /* green text on light surfaces */
+  --accent-tint: rgb(129 182 76 / 0.12);
+  --on-accent: #ffffff;
+
+  /* Segmented-control track */
+  --seg: rgb(28 25 18 / 0.07);
+
+  /* Elevation */
+  --elev-card: 0 1px 2px rgb(28 25 18 / 0.06);
+  --elev-board:
+    0 2px 6px rgb(28 25 18 / 0.14), 0 12px 32px rgb(28 25 18 / 0.18);
+}
+
+.dark {
+  --bg: #262420;
+  --surface: #2e2c28;
+  --sunken: #201e1b;
+  --raised: #3a3833;
+  --raised-hover: #45433e;
+
+  --chrome: #1b1a18;
+  --chrome-raised: #2b2926;
+  --chrome-raised-hover: #343231;
+  --chrome-ink: #c4c1bb;
+  --chrome-ink-3: #8b8984;
+  --chrome-accent: #9ccf68;
+
+  --line: rgb(244 242 234 / 0.09);
+  --line-strong: rgb(244 242 234 / 0.17);
+
+  --ink: #f2f0ea;
+  --ink-2: #c9c6bf;
+  --ink-3: #9d9b95;
+
+  --accent: #81b64c;
+  --accent-hover: #8ec356;
+  --accent-deep: #3f5c1e;
+  --accent-text: #a5d168;
+  --accent-tint: rgb(129 182 76 / 0.16);
+  --on-accent: #ffffff;
+
+  --seg: rgb(0 0 0 / 0.28);
+
+  --elev-card: 0 1px 2px rgb(0 0 0 / 0.28);
+  --elev-board:
+    0 2px 8px rgb(0 0 0 / 0.35), 0 16px 44px rgb(0 0 0 / 0.45);
+}
+
+@theme inline {
+  --color-bg: var(--bg);
+  --color-surface: var(--surface);
+  --color-sunken: var(--sunken);
+  --color-raised: var(--raised);
+  --color-raised-hover: var(--raised-hover);
+  --color-chrome: var(--chrome);
+  --color-chrome-raised: var(--chrome-raised);
+  --color-chrome-raised-hover: var(--chrome-raised-hover);
+  --color-chrome-ink: var(--chrome-ink);
+  --color-chrome-ink-3: var(--chrome-ink-3);
+  --color-chrome-accent: var(--chrome-accent);
+  --color-line: var(--line);
+  --color-line-strong: var(--line-strong);
+  --color-ink: var(--ink);
+  --color-ink-2: var(--ink-2);
+  --color-ink-3: var(--ink-3);
+  --color-accent: var(--accent);
+  --color-accent-deep: var(--accent-deep);
+  --color-accent-text: var(--accent-text);
+  --color-on-accent: var(--on-accent);
+
+  /* Type scale: 10 / 12 / 14 / 16 — no half-pixel sizes */
+  --text-2xs: 0.625rem;
+  --text-2xs--line-height: 1.45;
+
+  --shadow-card: var(--elev-card);
+  --shadow-board: var(--elev-board);
+}
+
 @theme {
-  --font-sans: 'Plus Jakarta Sans', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
-  --font-mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  --font-sans:
+    'Plus Jakarta Sans', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  --font-mono:
+    'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
 }
 
 html {
@@ -15,8 +132,137 @@ html.dark {
 }
 
 body {
-  @apply bg-[#f1efe9] text-stone-900 dark:bg-[#302e2b] dark:text-[#f8f8f6] antialiased selection:bg-[#81b64c]/25 selection:text-[#81b64c];
+  @apply bg-bg text-ink antialiased selection:bg-accent/25 selection:text-accent-text;
   font-feature-settings: 'cv02', 'cv03', 'cv04', 'cv11';
+}
+
+/* Visible keyboard focus everywhere (quality floor) */
+@layer base {
+  :where(button, [role='button']):focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+  }
+}
+
+/* Reusable primitives — utilities always win over these (cascade layers) */
+@layer components {
+  /* Inset panel: cards inside the dock */
+  .panel-sunken {
+    background: var(--sunken);
+    border: 1px solid var(--line);
+    border-radius: 12px;
+  }
+
+  /* Raised panel: cards sitting on the page/dock surface */
+  .panel {
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: 12px;
+  }
+
+  /* Uppercase section micro-label */
+  .micro-label {
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--ink-3);
+  }
+
+  /* Text inputs, search fields and selects */
+  .field {
+    width: 100%;
+    border-radius: 8px;
+    border: 1px solid var(--line-strong);
+    background: var(--surface);
+    color: var(--ink);
+    padding: 6px 10px;
+    font-size: 12px;
+    font-weight: 600;
+    line-height: 1.4;
+  }
+  .field::placeholder {
+    color: var(--ink-3);
+    font-weight: 500;
+  }
+  .field:focus-visible {
+    outline: none;
+    border-color: var(--accent);
+  }
+  select.field {
+    font-weight: 700;
+  }
+
+  /* Segmented control: track + buttons (layout cols stay in JSX) */
+  .seg {
+    padding: 3px;
+    border-radius: 10px;
+    background: var(--seg);
+  }
+  .seg-btn {
+    border-radius: 7px;
+    padding: 6px 8px;
+    font-size: 12px;
+    font-weight: 800;
+    color: var(--ink-2);
+    transition:
+      background 0.15s,
+      color 0.15s;
+  }
+  .seg-btn:hover {
+    color: var(--ink);
+  }
+  .seg-btn-active {
+    background: var(--surface);
+    color: var(--ink);
+    box-shadow: var(--elev-card);
+  }
+
+  /* Primary CTA with the championship-green 3-D edge */
+  .btn-primary {
+    border-radius: 8px;
+    background: var(--accent);
+    color: var(--on-accent);
+    font-weight: 800;
+    box-shadow: 0 2px 0 0 var(--accent-deep);
+    transition:
+      background 0.15s,
+      transform 0.1s,
+      box-shadow 0.1s;
+  }
+  .btn-primary:hover {
+    background: var(--accent-hover);
+  }
+  .btn-primary:active {
+    transform: translateY(1px);
+    box-shadow: 0 1px 0 0 var(--accent-deep);
+  }
+  .btn-primary:disabled {
+    opacity: 0.45;
+    box-shadow: none;
+    cursor: not-allowed;
+  }
+
+  /* Neutral quiet button */
+  .btn-quiet {
+    border-radius: 8px;
+    border: 1px solid var(--line-strong);
+    background: var(--raised);
+    color: var(--ink-2);
+    font-weight: 700;
+    transition:
+      background 0.15s,
+      color 0.15s,
+      border-color 0.15s;
+  }
+  .btn-quiet:hover {
+    color: var(--ink);
+    border-color: var(--accent);
+  }
+  .btn-quiet:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+  }
 }
 
 @keyframes pop-in {
@@ -56,6 +302,14 @@ body {
 }
 .animate-thinking {
   animation: thinking-pulse 1.1s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-pop,
+  .animate-fade,
+  .animate-thinking {
+    animation: none;
+  }
 }
 
 /* Thin scrollbars for workbench panels */

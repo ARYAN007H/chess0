@@ -40,7 +40,7 @@ function formatLineScore(
 }
 
 const RANK_ACCENTS: Record<number, { dot: string; label: string }> = {
-  1: { dot: 'bg-[#81b64c]', label: 'Best Move' },
+  1: { dot: 'bg-accent', label: 'Best Move' },
   2: { dot: 'bg-sky-400', label: '2nd Choice' },
   3: { dot: 'bg-amber-400', label: '3rd Idea' },
 };
@@ -77,21 +77,21 @@ export function EngineInfo({
         : [];
 
   return (
-    <div className="space-y-2.5 rounded-xl border border-stone-200/90 bg-stone-50/80 p-3 dark:border-white/10 dark:bg-[#1f1e1b]">
-      {/* Header & Telemetry Bar */}
-      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-stone-200/80 pb-2 dark:border-white/10">
+    <div className="panel-sunken space-y-2.5 p-3">
+      {/* Header & telemetry bar */}
+      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-line pb-2">
         <div>
           <div className="flex items-center gap-2">
-            <h3 className="text-[11px] font-extrabold tracking-wider text-stone-800 uppercase dark:text-[#f8f8f6]">
+            <h3 className="text-2xs font-extrabold tracking-wider text-ink uppercase">
               {isLearnMode ? 'Coach Move Suggestions (3 Lines)' : 'Chess0 v3 · 3-Line Multi-PV'}
             </h3>
             {(thinkingSide !== null || info.thinking) && (
-              <span className="animate-thinking font-mono text-[10px] font-bold text-[#81b64c]">
+              <span className="animate-thinking font-mono text-2xs font-bold text-accent-text">
                 calculating…
               </span>
             )}
           </div>
-          <p className="mt-0.5 font-mono text-[10.5px] tabular-nums text-stone-500 dark:text-[#989795]">
+          <p className="mt-0.5 font-mono text-2xs tabular-nums text-ink-3">
             Depth {info.depth}
             {info.seldepth > info.depth ? `/${info.seldepth}` : ''} ·{' '}
             {info.nodes > 0 ? `${fmtCount(info.nodes)} nodes` : 'ready'}
@@ -104,10 +104,10 @@ export function EngineInfo({
             type="button"
             onClick={() => onToggleArrows(!showMultiPvArrows)}
             title="Toggle 3-line candidate arrows on the board"
-            className={`rounded-md px-2 py-1 text-[10.5px] font-bold transition ${
+            className={`rounded-md px-2 py-1 text-2xs font-bold transition ${
               showMultiPvArrows
-                ? 'bg-[#81b64c]/20 text-[#629924] ring-1 ring-[#81b64c]/50 dark:text-[#a3d160]'
-                : 'bg-stone-200/80 text-stone-600 dark:bg-[#302e2b] dark:text-[#989795]'
+                ? 'bg-accent/15 text-accent-text ring-1 ring-accent/40'
+                : 'border border-line bg-raised text-ink-2'
             }`}
           >
             {showMultiPvArrows ? 'Arrows On' : 'Arrows Off'}
@@ -116,14 +116,14 @@ export function EngineInfo({
             type="button"
             onClick={onAnalyzeDeeper}
             title="Run deep 3-line search on this position"
-            className="rounded-md bg-stone-200/80 px-2 py-1 text-[10.5px] font-bold text-stone-700 transition hover:bg-[#81b64c] hover:text-white dark:bg-[#302e2b] dark:text-[#bababa] dark:hover:bg-[#81b64c] dark:hover:text-white"
+            className="rounded-md border border-line bg-raised px-2 py-1 text-2xs font-bold text-ink-2 transition hover:bg-accent hover:text-on-accent"
           >
             Deep Scan
           </button>
         </div>
       </div>
 
-      {/* 3 Candidate Lines Comparison */}
+      {/* 3 candidate lines comparison */}
       <div className="space-y-1.5">
         {[1, 2, 3].map((rank) => {
           const line = lines.find((l) => l.rank === rank);
@@ -133,10 +133,10 @@ export function EngineInfo({
             return (
               <div
                 key={rank}
-                className="flex items-center justify-between rounded-lg border border-dashed border-stone-200/80 px-2.5 py-2 text-xs text-stone-400 dark:border-white/10 dark:text-[#7c7a77]"
+                className="flex items-center justify-between rounded-lg border border-dashed border-line px-2.5 py-2 text-xs text-ink-3"
               >
-                <span className="font-mono text-[11px]">Line #{rank}</span>
-                <span className="text-[11px]">Evaluating candidate line…</span>
+                <span className="font-mono text-2xs">Line #{rank}</span>
+                <span className="text-2xs">Evaluating candidate line…</span>
               </div>
             );
           }
@@ -149,37 +149,33 @@ export function EngineInfo({
               key={rank}
               className={`group rounded-lg border px-2.5 py-2 transition ${
                 isBest
-                  ? 'border-[#81b64c]/50 bg-[#81b64c]/10 dark:border-[#81b64c]/40 dark:bg-[#81b64c]/[0.12]'
-                  : 'border-stone-200/80 bg-white dark:border-white/5 dark:bg-[#262522]'
+                  ? 'border-accent/50 bg-accent/10'
+                  : 'border-line bg-surface'
               }`}
             >
               <div className="flex items-center justify-between gap-2">
                 <div className="flex min-w-0 items-center gap-2">
                   <span className={`h-2 w-2 shrink-0 rounded-full ${accent.dot}`} />
                   {line.san && (
-                    <span className="font-mono text-xs font-black text-stone-900 dark:text-white">
-                      {line.san}
-                    </span>
+                    <span className="font-mono text-xs font-black text-ink">{line.san}</span>
                   )}
                   <span
-                    className={`rounded px-1.5 py-0.5 font-mono text-[10.5px] font-bold tabular-nums ${
+                    className={`rounded px-1.5 py-0.5 font-mono text-2xs font-bold tabular-nums ${
                       score.positive
-                        ? 'bg-stone-200/80 text-stone-900 dark:bg-[#f8f8f6] dark:text-[#262522]'
-                        : 'bg-stone-800 text-white dark:bg-[#141412] dark:text-[#bababa]'
+                        ? 'border border-line bg-sunken text-ink'
+                        : 'bg-ink text-bg'
                     }`}
                   >
                     {score.text}
                   </span>
-                  <span className="truncate text-[10.5px] font-bold text-stone-500 dark:text-[#989795]">
-                    {accent.label}
-                  </span>
+                  <span className="truncate text-2xs font-bold text-ink-3">{accent.label}</span>
                 </div>
 
                 {canPlayMove && line.uci && (
                   <button
                     type="button"
                     onClick={() => onPlayUciMove(line.uci)}
-                    className="shrink-0 rounded-md bg-[#81b64c] px-2.5 py-1 text-[10.5px] font-extrabold text-white shadow-xs transition hover:bg-[#72a341]"
+                    className="btn-primary shrink-0 px-2.5 py-1 text-2xs"
                   >
                     Play {line.san}
                   </button>
@@ -187,12 +183,10 @@ export function EngineInfo({
               </div>
 
               {coachSug?.explanation && (
-                <p className="mt-1 text-[11px] leading-snug text-stone-600 dark:text-[#d4d4d0]">
-                  {coachSug.explanation}
-                </p>
+                <p className="mt-1 text-xs leading-snug text-ink-2">{coachSug.explanation}</p>
               )}
 
-              <div className="mt-1 truncate font-mono text-[10.5px] text-stone-400 dark:text-[#8b8986]">
+              <div className="mt-1 truncate font-mono text-2xs text-ink-3">
                 Line: {line.pvSan.slice(0, 8).join(' ')}
               </div>
             </div>
@@ -202,5 +196,3 @@ export function EngineInfo({
     </div>
   );
 }
-
-
