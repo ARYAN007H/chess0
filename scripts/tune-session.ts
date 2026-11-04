@@ -63,6 +63,7 @@ const ACCEPT_MARKER = `${ARTIFACTS}/accepted-${ENGINE}.json`;
 // trinomial model uses this only to split score into implied W/L, so a wrong
 // assumption changes efficiency, not the direction of the test.
 const SPRT_DRAW_RATE = arg('draw-rate', ENGINE === 'v3' ? 0.5 : 0.7);
+const WALL_BUDGET_MIN = arg('wall-budget-min', 200); // gate hard stop, min (job cap 330)
 
 // A stale marker from a previous local run must not make the workflow think
 // this cycle accepted a challenger.
@@ -126,6 +127,7 @@ for (let cycle = 1; cycle <= CYCLES; cycle++) {
       '--alpha', String(SPRT_ALPHA),
       '--beta', String(SPRT_BETA),
       '--draw-rate', String(SPRT_DRAW_RATE),
+      '--wall-budget-min', String(WALL_BUDGET_MIN),
     );
   }
   const matchOut = run('scripts/match.ts', gateArgs, `cycle ${cycle} gate`);

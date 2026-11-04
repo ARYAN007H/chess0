@@ -39,6 +39,7 @@ const argStr = (name: string, def: string): string => {
   return i >= 0 && process.argv[i + 1] ? process.argv[i + 1] : def;
 };
 const PAIRS = Math.max(1, arg('pairs', 15));
+const WALL_BUDGET_MIN = Math.max(0, arg('wall-budget-min', 0)); // 0 = off (review P2: SPRT ceiling vs job cap)
 const MOVETIME = Math.max(50, arg('movetime', 250));
 const BOOK_PLIES = Math.max(0, arg('book-plies', 6));
 const MAX_PLIES = 300;
@@ -296,6 +297,14 @@ let sprtLlr = 0;
 const t0 = Date.now();
 
 outer: for (let p = 1; p <= PAIRS; p++) {
+  // Review P2: a borderline SPRT challenger can walk to the full pair ceiling
+  // (~290-580 min) and hit the job's 330-min timeout. Stop early as
+  // INCONCLUSIVE instead; the next cron cycle re-runs it. SPRT-only — the
+  // legacy --no-sprt gate keeps its fixed pair count.
+  if (sprtConfig && WALL_BUDGET_MIN > 0 && p > 1 && (Date.now() - t0) / 60000 >= WALL_BUDGET_MIN) {
+    console.log(`wall budget ${WALL_BUDGET_MIN} min reached after ${games} games — stopping (INCONCLUSIVE)`);
+    break outer;
+  }
   const opening = sampleOpening(BOOK_PLIES);
   const openName = opening.join(' ') || '(startpos)';
 

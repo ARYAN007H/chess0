@@ -31,6 +31,15 @@ const paramsObj: Record<string, number> = EVAL === 'v3' ? evalV3Params : evalV2P
 const tablesMap: Record<string, Int16Array> = EVAL === 'v3' ? TABLES : TABLES2;
 type ParamsShape = typeof evalV3Params | typeof evalV2Params;
 
+// Review P2 (PR #2): bounds anchor to FACTORY defaults, not the loaded
+// champion. Champion-relative bounds ratchet ±64 outward per accept (a random
+// walk across cycles); factory-anchored bounds keep every parameter within
+// ±64 of a sane value forever. Snapshot before --base is applied below.
+const FACTORY_SCALARS: Record<string, number> = { ...paramsObj };
+const FACTORY_TABLES: Record<string, number[]> = Object.fromEntries(
+  Object.keys(tablesMap).map((k) => [k, Array.from(tablesMap[k])]),
+);
+
 function applyForEngine(
   scalars?: Partial<Record<string, number>>,
   tables?: Partial<Record<string, number[]>>,
@@ -319,8 +328,11 @@ const NON_POSITIVE = new Set([
 ]);
 
 function scalarBounds(name: string, def: number): { min: number; max: number } {
-  let min = def - 64;
-  let max = def + 64;
+  // Anchor to the factory value (`def` is the current champion when --base is
+  // used — see the FACTORY_* snapshot comment).
+  const f = FACTORY_SCALARS[name] ?? def;
+  let min = f - 64;
+  let max = f + 64;
   if (NON_NEGATIVE.has(name)) min = 0;
   if (NON_POSITIVE.has(name)) max = 0;
   return { min, max };
@@ -337,7 +349,9 @@ for (const tName of Object.keys(tablesMap)) {
   for (let r = 1; r <= 6; r++) {
     const def = tablesMap[tName][r];
     // Rank tables are bonuses; rank 0 and 7 are structurally zero.
-    tunables.push({ kind: 'table', name: tName, index: r, step0: 4, min: 0, max: def + 64 });
+    // Factory-anchored max (review P2) — same anti-ratchet as scalarBounds.
+    const fMax = (FACTORY_TABLES[tName]?.[r] ?? def) + 64;
+    tunables.push({ kind: 'table', name: tName, index: r, step0: 4, min: 0, max: fMax });
   }
 }
 console.log(`tunables: ${tunables.length}`);
@@ -479,8 +493,14 @@ console.log(`improved params: ${improvedKeys.size} of ${tunables.length}`);
 {
   const sp = newStartPosition();
   const e = evalPos(sp);
-  if (Math.abs(e) >= 60) console.warn(`WARNING: startpos eval ${e} outside ±60 (test npm test will fail)`);
-  else console.log(`guard: startpos eval ${e} OK (±60)`);
+  // Review P1 (PR #2): this guard was warn-only and nothing ran `npm test`
+  // before the publish step, so an accepted challenger could silently break
+  // the suite on main. Fail the tuner instead; tune-session aborts on exit != 0.
+  if (Math.abs(e) >= 60) {
+    console.warn(`FATAL: startpos eval ${e} outside ±60 — refusing to write params (npm test would fail on main)`);
+    process.exit(1);
+  }
+  console.log(`guard: startpos eval ${e} OK (±60)`);
 }
 
 // --- output --------------------------------------------------------------------------

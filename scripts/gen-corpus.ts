@@ -31,6 +31,9 @@ const GAMES = Math.max(1, arg('games', 1000));
 const DEPTH = Math.max(2, arg('depth', 5));
 // Matrix shards generate games 1..GAMES independently; an offset keeps the
 // merged corpus's game ids disjoint so a grouped 80/20 split is still valid.
+// Review P2 (PR #2): offsets are collision-free only while total input games
+// stay below ~4M (unreachable today: cycles use <=12k games). Revisit if the
+// corpus scale ever approaches that.
 const GAME_OFFSET = Math.max(0, arg('game-offset', 0));
 const OUT = (() => {
   const i = process.argv.indexOf('--out');
