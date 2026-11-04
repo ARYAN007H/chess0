@@ -8,6 +8,11 @@
  *                            [--a v2] [--b v3]
  *
  * Variants: v2 | v3 | v3tuned (v3 with data/tuned-params.json applied).
+ *
+ * Add --sprt for a sequential promotion gate instead of a fixed game count.
+ * SPRT defaults: H0 = 0 Elo, H1 = +30 Elo, alpha = 0.05, beta = 0.10,
+ * draw-rate = 0.50. It emits `SPRT: ACCEPT|REJECT|INCONCLUSIVE`, which
+ * tune-session parses; the legacy fixed-score bar remains for --no-sprt.
  */
 
 import { newStartPosition } from '../src/engine/position';
@@ -41,6 +46,43 @@ const MAX_PLIES = 300;
 type Variant = 'v2' | 'v3' | 'v3tuned' | 'v3base' | 'v2tuned' | 'v2base' | 'v3nnue';
 const SIDE_A = argStr('a', 'v2') as Variant;
 const SIDE_B = argStr('b', 'v3') as Variant;
+
+// --- SPRT gate ---------------------------------------------------------------
+// Trinomial model: with an assumed draw rate d, score p implies
+// win = p - d/2 and loss = 1 - p - d/2. Draws carry no evidence when d is the
+// same under both hypotheses; wins/losses drive the LLR.
+const SPRT = process.argv.includes('--sprt');
+const SPRT_ELO0 = arg('sprt-elo0', 0);
+const SPRT_ELO1 = arg('sprt-elo1', 30);
+const SPRT_ALPHA = arg('alpha', 0.05);
+const SPRT_BETA = arg('beta', 0.1);
+const SPRT_DRAW_RATE = arg('draw-rate', 0.5);
+
+const sprtConfig = (() => {
+  if (!SPRT) return null;
+  if (!(SPRT_ELO1 > SPRT_ELO0)) throw new Error(`--sprt-elo1 (${SPRT_ELO1}) must exceed --sprt-elo0 (${SPRT_ELO0})`);
+  if (!(SPRT_ALPHA > 0 && SPRT_ALPHA < 1)) throw new Error(`--alpha must be in (0,1), got ${SPRT_ALPHA}`);
+  if (!(SPRT_BETA > 0 && SPRT_BETA < 1)) throw new Error(`--beta must be in (0,1), got ${SPRT_BETA}`);
+  if (!(SPRT_DRAW_RATE >= 0 && SPRT_DRAW_RATE < 1)) throw new Error(`--draw-rate must be in [0,1), got ${SPRT_DRAW_RATE}`);
+  const score = (elo: number): number => 1 / (1 + Math.pow(10, -elo / 400));
+  const p0 = score(SPRT_ELO0);
+  const p1 = score(SPRT_ELO1);
+  const w0 = p0 - SPRT_DRAW_RATE / 2;
+  const l0 = 1 - p0 - SPRT_DRAW_RATE / 2;
+  const w1 = p1 - SPRT_DRAW_RATE / 2;
+  const l1 = 1 - p1 - SPRT_DRAW_RATE / 2;
+  if (Math.min(w0, l0, w1, l1) <= 0) {
+    throw new Error(`draw rate ${SPRT_DRAW_RATE} makes an implied W/L probability non-positive`);
+  }
+  return {
+    lower: Math.log(SPRT_BETA / (1 - SPRT_ALPHA)),
+    upper: Math.log((1 - SPRT_BETA) / SPRT_ALPHA),
+    llrWin: Math.log(w1 / w0),
+    llrLoss: Math.log(l1 / l0),
+    p0,
+    p1,
+  };
+})();
 
 // --- per-variant eval params (for the *tuned/*base variants) --------------------
 
@@ -249,9 +291,11 @@ const tally: Record<Variant, Tally> = {
   v3nnue: newTally(),
 };
 let games = 0;
+let sprtResult: 'ACCEPT' | 'REJECT' | 'INCONCLUSIVE' | null = null;
+let sprtLlr = 0;
 const t0 = Date.now();
 
-for (let p = 1; p <= PAIRS; p++) {
+outer: for (let p = 1; p <= PAIRS; p++) {
   const opening = sampleOpening(BOOK_PLIES);
   const openName = opening.join(' ') || '(startpos)';
 
@@ -286,7 +330,28 @@ for (let p = 1; p <= PAIRS; p++) {
         `opening: ${openName.length > 48 ? openName.slice(0, 45) + '...' : openName}`,
     );
   }
+
+  if (sprtConfig) {
+    const t = tally[SIDE_B];
+    sprtLlr = t.win * sprtConfig.llrWin + t.loss * sprtConfig.llrLoss;
+    const scorePct = (100 * (t.win + 0.5 * t.draw)) / games;
+    if (p % 10 === 0 || sprtLlr >= sprtConfig.upper || sprtLlr <= sprtConfig.lower) {
+      console.log(
+        `SPRT p=${p} games=${games} score=${scorePct.toFixed(1)}% LLR=${sprtLlr.toFixed(2)} ` +
+          `bounds=[${sprtConfig.lower.toFixed(2)}, ${sprtConfig.upper.toFixed(2)}]`,
+      );
+    }
+    if (sprtLlr >= sprtConfig.upper) {
+      sprtResult = 'ACCEPT';
+      break outer;
+    }
+    if (sprtLlr <= sprtConfig.lower) {
+      sprtResult = 'REJECT';
+      break outer;
+    }
+  }
 }
+if (sprtConfig && sprtResult === null) sprtResult = 'INCONCLUSIVE';
 
 // --- elo estimate -----------------------------------------------------------------
 
@@ -311,6 +376,17 @@ for (const side of [SIDE_A, SIDE_B]) {
 }
 console.log(`avg game length: ${((tally[SIDE_A].plies + tally[SIDE_B].plies) / (2 * games)).toFixed(0)} plies`);
 console.log(eloLine);
-if (s > 0.5) console.log(`VERDICT: ${SIDE_B} is stronger`);
+if (sprtConfig) {
+  const t = tally[SIDE_B];
+  const scorePct = (100 * (t.win + 0.5 * t.draw)) / games;
+  console.log(
+    `SPRT: ${sprtResult}  H0 ${SPRT_ELO0} Elo vs H1 ${SPRT_ELO1} Elo  ` +
+      `alpha ${SPRT_ALPHA} beta ${SPRT_BETA} draw ${SPRT_DRAW_RATE}  ` +
+      `games ${games}  score ${scorePct.toFixed(1)}%  LLR ${sprtLlr.toFixed(2)}`,
+  );
+  if (sprtResult === 'ACCEPT') console.log(`VERDICT: ${SIDE_B} is stronger`);
+  else if (sprtResult === 'REJECT' && s < 0.5) console.log(`VERDICT: ${SIDE_A} is stronger`);
+  else console.log('VERDICT: inconclusive');
+} else if (s > 0.5) console.log(`VERDICT: ${SIDE_B} is stronger`);
 else if (s < 0.5) console.log(`VERDICT: ${SIDE_A} is stronger`);
 else console.log('VERDICT: even');

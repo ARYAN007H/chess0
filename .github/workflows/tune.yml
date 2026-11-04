@@ -2,8 +2,13 @@ name: Continuous Tuning
 
 # Champion/challenger self-improvement, run CONTINUOUSLY: one workflow run =
 # one improve-or-discard cycle (4 parallel VMs generate corpus shards with the
-# CURRENT champion; one job merges, tunes a challenger, gates it vs the
-# champion in a real match, and promotes it only on a win).
+# CURRENT champion; one job merges, tunes a challenger starting from that
+# champion, gates it with a trinomial SPRT, and promotes it only on ACCEPT).
+#
+# The SPRT is H0 = 0 Elo vs H1 = +30 Elo, alpha 0.05, beta 0.10, with a
+# 300-pair (600-game) ceiling; it stops as soon as the LLR crosses a boundary.
+# A fixed 80-game/60% bar required roughly +70 Elo, which real eval tweaks
+# almost never clear.
 #
 # Sessions CHAIN: a successful cycle dispatches the next cycle for the same
 # engine with the same inputs, so tuning runs session-after-session until you
@@ -30,8 +35,8 @@ on:
         description: 'Total self-play games per cycle (4 shards); empty = engine default (v3 4000 / v2 12000)'
         default: ''
       match-pairs:
-        description: 'Paired games (x2) for the acceptance gate'
-        default: '40'
+        description: 'Max paired games (x2) for the SPRT acceptance gate'
+        default: '300'
 
 permissions:
   contents: write
@@ -82,6 +87,7 @@ jobs:
             --games $((GAMES / 4)) \
             --depth 5 \
             --seed ${{ github.run_id }}0${{ matrix.shard }} \
+            --game-offset $(( (${{ matrix.shard }} - 1) * 1000000 )) \
             --out "data/artifacts/corpus-shard-${{ matrix.shard }}.txt" \
             --params "$CHAMPION"
 
@@ -95,11 +101,13 @@ jobs:
     if: ${{ (github.event.inputs.engine || (github.event.schedule == '45 2 * * *' && 'v2' || 'v3')) == 'v3' && vars.TUNING_V3_ENABLED != 'false' || (github.event.inputs.engine || (github.event.schedule == '45 2 * * *' && 'v2' || 'v3')) == 'v2' && vars.TUNING_V2_ENABLED != 'false' }}
     needs: corpus
     runs-on: ubuntu-latest
-    timeout-minutes: 150
+    timeout-minutes: 330
     env:
       ENGINE: ${{ github.event.inputs.engine || (github.event.schedule == '45 2 * * *' && 'v2' || 'v3') }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - uses: oven-sh/setup-bun@v2
         with:
@@ -129,18 +137,33 @@ jobs:
             --engine "$ENGINE" \
             --cycles 1 \
             --corpus data/artifacts/corpus-merged.txt \
-            --match-pairs "${{ github.event.inputs.match-pairs || '20' }}" \
-            --movetime 250 \
+            --match-pairs "${{ github.event.inputs.match-pairs || '300' }}" \
+            --movetime 200 \
+            --sprt-elo1 30 \
+            --alpha 0.05 \
+            --beta 0.10 \
             --sweeps 8
 
       - name: Push accepted champions
         run: |
-          git add data/params-current.json data/params-current-v2.json 2>/dev/null || true
+          CHAMPION_FILE=data/params-current.json
+          if [ "$ENGINE" = "v2" ]; then CHAMPION_FILE=data/params-current-v2.json; fi
+
+          git add -- data/params-current.json data/params-current-v2.json
           if ! git diff --cached --quiet; then
             git commit -m "tune: publish champion from session ${{ github.run_id }}"
           fi
-          git pull --rebase origin main || true
-          git push origin main || echo "push failed — champion kept in artifacts"
+          git pull --rebase origin main
+          git push origin main
+
+          if [ -f "data/artifacts/accepted-${ENGINE}.json" ]; then
+            git fetch origin main
+            git show "origin/main:${CHAMPION_FILE}" > /tmp/published-champion.json
+            cmp "$CHAMPION_FILE" /tmp/published-champion.json
+            echo "verified ${CHAMPION_FILE} is on origin/main"
+          else
+            echo "no accepted challenger this session — nothing to publish"
+          fi
 
       - name: Chain next session (unless stopped)
         if: success()
@@ -161,7 +184,7 @@ jobs:
             --ref main \
             -f engine="$ENGINE" \
             -f corpus-games="$GAMES" \
-            -f match-pairs="${{ github.event.inputs.match-pairs || '40' }}"
+            -f match-pairs="${{ github.event.inputs.match-pairs || '300' }}"
           echo "chained next $ENGINE session (games=$GAMES)"
 
       - uses: actions/upload-artifact@v4
