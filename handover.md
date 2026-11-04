@@ -24,7 +24,8 @@ works here as "agent-1"; read its rules before touching the shared tree),
 | 100M prefix | first 100M | **−89 ±79** | saturation vs 50M within noise |
 | distilled R1 | 100M net + 1.26M depth-6 self-play labels (lr 1e-4 × 2ep) | **−127 ±81** | WEAK TEACHER regression |
 | 64-wide 100M | RUNNING | benchmark: −89 | tests capacity axis |
-| uniform-20m | uniform sample, 32-wide | pending | tests composition axis (benchmark: −158) |
+| **100M + incremental acc** | same 100M data, 2.8× faster eval (PR #1) | **+22 ±76 PASS** | FIRST POSITIVE GATE — the speed work is worth ~+111 vs the −89 pre-acc benchmark (80 games, 38W 9D 33L) |
+| uniform-20m + acc | uniform 20M sample, 32-wide | **−89 ±79 REJECT** | composition helped vs 20M-prefix (−158) but volume wins: 100M-prefix+acc = +22, gap ~+111. 100M-uniform pretrain DEMOTED below SF-teacher / arch v2 |
 
 - Node deficit is constant across ALL gates: nets search ~43% fewer nodes (eval ~4-4.5µs JS vs
   ~0.3µs hand eval). This is the primary structural deficit → WASM SIMD (Phase 1.5) is the fix.
