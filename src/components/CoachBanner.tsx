@@ -33,29 +33,29 @@ function CoachAvatarSvg({ mood }: { mood: CoachMood }) {
     <div className="relative shrink-0">
       <svg
         viewBox="0 0 64 64"
-        className="h-14 w-14 overflow-visible rounded-xl bg-[#1f1e1b] p-0.5 shadow-md ring-2 ring-black/25"
+        className="h-12 w-12 overflow-visible rounded-lg bg-chrome p-0.5 shadow-card ring-2 ring-black/25"
         aria-hidden="true"
       >
         {/* Warm background glow */}
         <rect x="2" y="2" width="60" height="60" rx="10" fill={accent} fillOpacity="0.18" />
-        {/* Grandmaster Blazer */}
+        {/* Grandmaster blazer */}
         <path
           d="M10 60 C10 46 19 41 32 41 C45 41 54 46 54 60 Z"
           fill="#2b2926"
           stroke={accent}
           strokeWidth="1.5"
         />
-        {/* Crisp Collar & Tie */}
+        {/* Crisp collar & tie */}
         <path d="M26 41 L32 53 L38 41 Z" fill="#ffffff" />
         <path d="M30.5 44 L32 56 L33.5 44 Z" fill={accent} />
         {/* Head */}
         <circle cx="32" cy="25" r="13.5" fill="#f3d4b7" stroke="#1f1e1b" strokeWidth="1.4" />
-        {/* Silver-Streaked Grandmaster Hair */}
+        {/* Silver-streaked grandmaster hair */}
         <path
           d="M18.5 23 C18.5 12 24.5 9.5 32 9.5 C39.5 9.5 45.5 12 45.5 23 C42.5 17.5 37.5 15.5 32 15.5 C26.5 15.5 21.5 17.5 18.5 23 Z"
           fill="#4a4845"
         />
-        {/* Signature Horn-Rimmed Glasses */}
+        {/* Signature horn-rimmed glasses */}
         <rect
           x="21.5"
           y="20.5"
@@ -82,7 +82,7 @@ function CoachAvatarSvg({ mood }: { mood: CoachMood }) {
         {/* Eyes */}
         <circle cx="25.8" cy="23.6" r="1.5" fill="#1f1e1b" />
         <circle cx="38.2" cy="23.6" r="1.5" fill="#1f1e1b" />
-        {/* Expressive Mouth */}
+        {/* Expressive mouth */}
         {mood === 'excited' ? (
           <path
             d="M27 31 Q32 36 37 31"
@@ -110,9 +110,9 @@ function CoachAvatarSvg({ mood }: { mood: CoachMood }) {
         )}
       </svg>
 
-      {/* Corner Classification / Mood Badge */}
+      {/* Corner classification / mood badge */}
       <span
-        className="absolute -top-1 -right-1 flex h-5 min-w-5 items-center justify-center rounded-full px-1 font-mono text-[10px] font-black text-white shadow ring-2 ring-[#262522]"
+        className="absolute -top-1 -right-1 flex h-5 min-w-5 items-center justify-center rounded-full px-1 font-mono text-2xs font-black text-white shadow ring-2 ring-sunken"
         style={{ backgroundColor: accent }}
       >
         {mood === 'excited' ? '!!' : mood === 'warning' ? '?' : mood === 'locked' ? '🔒' : 'GM'}
@@ -133,25 +133,25 @@ export function CoachBanner({ message, ttsEnabled, onToggleTts }: CoachBannerPro
   }, [message.headline, message.body, message.mood, ttsEnabled]);
 
   return (
-    <div className="flex items-start gap-3 border-b border-stone-200/80 bg-stone-100/90 p-3 dark:border-white/10 dark:bg-[#21201d]">
+    <div className="flex items-start gap-2.5 border-b border-line bg-sunken p-2.5">
       <CoachAvatarSvg mood={message.mood} />
 
-      {/* Chess.com-style Crisp Speech Bubble with Left Tail */}
-      <div className="relative min-w-0 flex-1 rounded-xl bg-white p-2.5 text-[#262522] shadow-sm ring-1 ring-black/10 dark:bg-[#f8f8f6] dark:text-[#262522]">
-        {/* Speech Bubble Triangle Tail */}
+      {/* Speech bubble with left tail */}
+      <div className="relative min-w-0 flex-1 rounded-lg border border-line bg-surface p-2.5 text-ink shadow-card">
+        {/* Speech bubble triangle tail */}
         <span
           aria-hidden="true"
-          className="absolute top-4 -left-1.5 h-3 w-3 rotate-45 bg-white ring-l ring-b ring-black/10 dark:bg-[#f8f8f6]"
+          className="absolute top-4 -left-[7px] h-3 w-3 rotate-45 border-b border-l border-line bg-surface"
         />
 
         <div className="relative flex items-center justify-between gap-1.5">
           <div className="flex min-w-0 items-center gap-1.5">
-            <span className="text-[10px] font-black uppercase tracking-wider text-stone-500">
+            <span className="text-2xs font-black tracking-wider text-ink-3 uppercase">
               GM Coach Viktor
             </span>
             {message.badgeText && (
               <span
-                className="shrink-0 rounded px-1.5 py-0.5 font-mono text-[10px] font-extrabold text-white"
+                className="shrink-0 rounded px-1.5 py-0.5 font-mono text-2xs font-extrabold text-white"
                 style={{ backgroundColor: message.badgeColor || '#81b64c' }}
               >
                 {message.badgeText}
@@ -165,7 +165,7 @@ export function CoachBanner({ message, ttsEnabled, onToggleTts }: CoachBannerPro
               onClick={() => coachVoice.speak(`${message.headline}. ${message.body}`, true)}
               title="Read coach explanation aloud"
               aria-label="Read coach explanation aloud"
-              className="rounded bg-stone-200/80 px-1.5 py-0.5 text-[10px] font-bold text-stone-700 transition hover:bg-[#81b64c] hover:text-white"
+              className="rounded border border-line bg-surface px-1.5 py-0.5 text-2xs font-bold text-ink-2 transition hover:bg-accent hover:text-on-accent"
             >
               🔊
             </button>
@@ -176,10 +176,10 @@ export function CoachBanner({ message, ttsEnabled, onToggleTts }: CoachBannerPro
               aria-label={
                 ttsEnabled ? 'Disable automatic voice coach' : 'Enable automatic voice coach'
               }
-              className={`rounded px-1.5 py-0.5 text-[10px] font-bold transition ${
+              className={`rounded px-1.5 py-0.5 text-2xs font-bold transition ${
                 ttsEnabled
-                  ? 'bg-[#81b64c] text-white'
-                  : 'bg-stone-200/80 text-stone-600 hover:bg-stone-300'
+                  ? 'bg-accent text-on-accent'
+                  : 'border border-line bg-surface text-ink-2 hover:bg-raised-hover'
               }`}
             >
               {ttsEnabled ? 'Voice On' : 'Voice'}
@@ -187,11 +187,11 @@ export function CoachBanner({ message, ttsEnabled, onToggleTts }: CoachBannerPro
           </div>
         </div>
 
-        <div className="relative mt-1 text-xs font-extrabold leading-snug text-[#262522]">
+        <div className="relative mt-1 text-xs font-extrabold leading-snug text-ink">
           {message.headline}
         </div>
 
-        <p className="relative mt-0.5 line-clamp-2 text-[11.5px] leading-snug font-medium text-stone-600">
+        <p className="relative mt-0.5 line-clamp-2 text-xs leading-snug font-medium text-ink-2">
           {message.body}
         </p>
 
@@ -199,13 +199,12 @@ export function CoachBanner({ message, ttsEnabled, onToggleTts }: CoachBannerPro
           <button
             type="button"
             onClick={message.onAction}
-            className="relative mt-1.5 inline-flex items-center gap-1 rounded-md bg-[#81b64c] px-2.5 py-0.5 text-[11px] font-extrabold text-white shadow-xs transition hover:bg-[#72a341]"
+            className="btn-primary relative mt-1.5 px-2.5 py-1 text-2xs"
           >
-            {message.actionLabel} →
+            {message.actionLabel}
           </button>
         )}
       </div>
     </div>
   );
 }
-

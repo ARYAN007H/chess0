@@ -69,29 +69,21 @@ export function MatchArenaPanel(props: MatchArenaPanelProps) {
   };
 
   return (
-    <div className="space-y-3 p-3.5">
-      {/* Top Arena Selector: Play vs Bot | Play a Friend (Invite Link) */}
-      <div className="space-y-2.5 rounded-xl border border-stone-200/90 bg-stone-50/80 p-3 dark:border-white/10 dark:bg-[#1f1e1b]">
-        <div className="grid grid-cols-2 gap-1 rounded-lg bg-stone-200/80 p-1 dark:bg-[#302e2b]">
+    <div className="space-y-3">
+      {/* Top arena selector: Play vs Bot | Play a Friend (invite link) */}
+      <div className="panel-sunken space-y-2.5 p-3">
+        <div className="seg grid grid-cols-2">
           <button
             type="button"
             onClick={() => props.onSwitchMode('hve')}
-            className={`rounded-md py-1.5 text-xs font-extrabold transition ${
-              props.mode === 'hve'
-                ? 'bg-white text-stone-900 shadow-xs dark:bg-[#21201d] dark:text-white'
-                : 'text-stone-600 hover:text-stone-900 dark:text-[#989795] dark:hover:text-white'
-            }`}
+            className={`seg-btn py-1.5 ${props.mode === 'hve' ? 'seg-btn-active' : ''}`}
           >
             Play vs Bot
           </button>
           <button
             type="button"
             onClick={() => props.onSwitchMode('pvp')}
-            className={`rounded-md py-1.5 text-xs font-extrabold transition ${
-              props.mode === 'pvp'
-                ? 'bg-white text-stone-900 shadow-xs dark:bg-[#21201d] dark:text-white'
-                : 'text-stone-600 hover:text-stone-900 dark:text-[#989795] dark:hover:text-white'
-            }`}
+            className={`seg-btn py-1.5 ${props.mode === 'pvp' ? 'seg-btn-active' : ''}`}
           >
             Play a Friend · Invite
           </button>
@@ -100,24 +92,24 @@ export function MatchArenaPanel(props: MatchArenaPanelProps) {
         {/* PLAY VS BOT CONFIGURATION */}
         {props.mode === 'hve' && (
           <div className="space-y-2.5">
-            {/* Learn Mode vs Competitive Mode Toggle */}
+            {/* Learn mode vs competitive mode toggle */}
             <div className="grid grid-cols-2 gap-2">
               <button
                 type="button"
                 onClick={() => props.onSetBotPlayStyle('learn')}
                 className={`rounded-lg border p-2.5 text-left transition ${
                   props.botPlayStyle === 'learn'
-                    ? 'border-[#81b64c] bg-[#81b64c]/15 text-stone-900 dark:text-white'
-                    : 'border-stone-200/90 bg-white text-stone-600 hover:border-stone-300 dark:border-white/5 dark:bg-[#262522] dark:text-[#bababa]'
+                    ? 'border-accent bg-accent/15 text-ink'
+                    : 'border-line bg-surface text-ink-2 hover:border-line-strong'
                 }`}
               >
                 <div className="flex items-center justify-between text-xs font-black">
                   <span>Coach Assisted</span>
-                  <span className="rounded bg-[#81b64c]/25 px-1.5 py-0.5 text-[9.5px] font-extrabold text-[#629924] dark:text-[#a3d160]">
+                  <span className="rounded bg-accent/20 px-1.5 py-0.5 text-2xs font-extrabold text-accent-text">
                     LEARN
                   </span>
                 </div>
-                <div className="mt-0.5 text-[10.5px] opacity-80">
+                <div className="mt-0.5 text-2xs opacity-80">
                   3-line hints, arrows &amp; takebacks
                 </div>
               </button>
@@ -127,29 +119,29 @@ export function MatchArenaPanel(props: MatchArenaPanelProps) {
                 onClick={() => props.onSetBotPlayStyle('comp')}
                 className={`rounded-lg border p-2.5 text-left transition ${
                   props.botPlayStyle === 'comp'
-                    ? 'border-amber-500 bg-amber-500/15 text-stone-900 dark:text-white'
-                    : 'border-stone-200/90 bg-white text-stone-600 hover:border-stone-300 dark:border-white/5 dark:bg-[#262522] dark:text-[#bababa]'
+                    ? 'border-amber-500 bg-amber-500/15 text-ink'
+                    : 'border-line bg-surface text-ink-2 hover:border-line-strong'
                 }`}
               >
                 <div className="flex items-center justify-between text-xs font-black">
                   <span>Competitive</span>
-                  <span className="font-mono text-[10.5px] font-extrabold tabular-nums text-amber-600 dark:text-amber-400">
+                  <span className="font-mono text-2xs font-extrabold tabular-nums text-amber-600 dark:text-amber-400">
                     {props.compElo}
                   </span>
                 </div>
-                <div className="mt-0.5 text-[10.5px] opacity-80">
+                <div className="mt-0.5 text-2xs opacity-80">
                   No hints · Official Elo rated
                 </div>
               </button>
             </div>
 
-            {/* Bot Strength & Color Row */}
-            <div className="grid grid-cols-1 gap-1.5 sm:grid-cols-[1fr_auto]">
+            {/* Bot strength & color row */}
+            <div className="grid grid-cols-1 gap-2 sm:grid-cols-[1fr_auto]">
               <select
                 aria-label="Bot difficulty level"
                 value={currentBotLevel}
                 onChange={(e) => props.onSetEngineLevel(botSide, e.target.value as Level)}
-                className="min-w-0 rounded-lg border border-stone-300 bg-white px-2.5 py-1.5 text-xs font-bold text-stone-800 focus:border-[#81b64c] focus:outline-none dark:border-white/10 dark:bg-[#262522] dark:text-white"
+                className="field min-w-0"
               >
                 {(Object.keys(LEVEL_LABELS) as Level[]).map((lvl) => (
                   <option key={lvl} value={lvl}>
@@ -158,7 +150,7 @@ export function MatchArenaPanel(props: MatchArenaPanelProps) {
                 ))}
               </select>
 
-              <div className="flex items-center gap-1">
+              <div className="flex items-center gap-1.5">
                 {(['white', 'random', 'black'] as const).map((s) => (
                   <button
                     key={s}
@@ -167,8 +159,8 @@ export function MatchArenaPanel(props: MatchArenaPanelProps) {
                     onClick={() => props.onChooseSide(s)}
                     className={`rounded-lg border px-2.5 py-1.5 text-xs font-bold capitalize transition ${
                       props.playerSide === s
-                        ? 'border-[#81b64c] bg-[#81b64c]/20 text-[#537a28] dark:text-[#a3d160]'
-                        : 'border-stone-300 bg-white text-stone-600 hover:border-stone-400 dark:border-white/10 dark:bg-[#262522] dark:text-[#bababa]'
+                        ? 'border-accent bg-accent/20 text-accent-text'
+                        : 'border-line-strong bg-surface text-ink-2 hover:border-ink-3'
                     }`}
                   >
                     {s === 'random' ? '🎲' : s}
@@ -183,9 +175,7 @@ export function MatchArenaPanel(props: MatchArenaPanelProps) {
         {props.mode === 'pvp' && (
           <div className="space-y-2.5">
             <div className="flex items-center justify-between">
-              <span className="text-[10px] font-bold tracking-wider text-stone-400 uppercase dark:text-[#7c7a77]">
-                2-Player Mode
-              </span>
+              <span className="micro-label">2-Player Mode</span>
               <div className="flex gap-1">
                 {(
                   [
@@ -197,10 +187,10 @@ export function MatchArenaPanel(props: MatchArenaPanelProps) {
                     key={sub}
                     type="button"
                     onClick={() => props.onSetPvpSubMode(sub)}
-                    className={`rounded-md px-2 py-1 text-[11px] font-bold transition ${
+                    className={`rounded-md px-2 py-1 text-2xs font-bold transition ${
                       props.pvpSubMode === sub
-                        ? 'bg-[#81b64c]/20 text-[#537a28] dark:text-[#a3d160]'
-                        : 'text-stone-500 hover:text-stone-800 dark:text-[#989795]'
+                        ? 'bg-accent/15 text-accent-text'
+                        : 'text-ink-3 hover:text-ink'
                     }`}
                   >
                     {label}
@@ -212,17 +202,15 @@ export function MatchArenaPanel(props: MatchArenaPanelProps) {
             {props.pvpSubMode === 'online' ? (
               <div className="space-y-2.5">
                 {!props.roomState ? (
-                  <div className="space-y-2.5 rounded-lg border border-stone-200/80 bg-white p-2.5 dark:border-white/10 dark:bg-[#262522]">
+                  <div className="panel space-y-2.5 p-2.5">
                     <div>
-                      <label className="block text-[10px] font-bold tracking-wider text-stone-400 uppercase">
-                        Your Display Name
-                      </label>
+                      <label className="micro-label block">Your Display Name</label>
                       <input
                         type="text"
                         value={props.playerName}
                         onChange={(e) => props.onSetPlayerName(e.target.value)}
                         placeholder="Enter your name…"
-                        className="mt-1 w-full rounded-lg border border-stone-300 bg-stone-50 px-2.5 py-1.5 text-xs font-semibold text-stone-800 focus:border-[#81b64c] focus:outline-none dark:border-white/10 dark:bg-[#1f1e1b] dark:text-white"
+                        className="field mt-1"
                       />
                     </div>
 
@@ -230,21 +218,21 @@ export function MatchArenaPanel(props: MatchArenaPanelProps) {
                       <button
                         type="button"
                         onClick={() => props.onCreateInviteRoom('white', props.playerName)}
-                        className="rounded-lg bg-[#81b64c] px-2 py-2 text-xs font-extrabold text-white shadow-[0_2px_0_#537a28] transition hover:bg-[#8ec356]"
+                        className="btn-primary px-2 py-2 text-xs"
                       >
                         Host White
                       </button>
                       <button
                         type="button"
                         onClick={() => props.onCreateInviteRoom('random', props.playerName)}
-                        className="rounded-lg bg-[#81b64c] px-2 py-2 text-xs font-extrabold text-white shadow-[0_2px_0_#537a28] transition hover:bg-[#8ec356]"
+                        className="btn-primary px-2 py-2 text-xs"
                       >
                         Host 🎲
                       </button>
                       <button
                         type="button"
                         onClick={() => props.onCreateInviteRoom('black', props.playerName)}
-                        className="rounded-lg bg-[#81b64c] px-2 py-2 text-xs font-extrabold text-white shadow-[0_2px_0_#537a28] transition hover:bg-[#8ec356]"
+                        className="btn-primary px-2 py-2 text-xs"
                       >
                         Host Black
                       </button>
@@ -256,7 +244,7 @@ export function MatchArenaPanel(props: MatchArenaPanelProps) {
                         value={joinCodeInput}
                         onChange={(e) => setJoinCodeInput(e.target.value.toUpperCase())}
                         placeholder="Or enter 6-digit Room Code…"
-                        className="min-w-0 flex-1 rounded-lg border border-stone-300 bg-stone-50 px-2.5 py-1.5 font-mono text-xs uppercase text-stone-800 focus:border-[#81b64c] focus:outline-none dark:border-white/10 dark:bg-[#1f1e1b] dark:text-white"
+                        className="field min-w-0 flex-1 font-mono uppercase"
                       />
                       <button
                         type="button"
@@ -265,22 +253,22 @@ export function MatchArenaPanel(props: MatchArenaPanelProps) {
                             props.onJoinInviteRoom(joinCodeInput.trim(), props.playerName);
                           }
                         }}
-                        className="rounded-lg bg-stone-200 px-3 py-1.5 text-xs font-extrabold text-stone-800 transition hover:bg-stone-300 dark:bg-[#302e2b] dark:text-white"
+                        className="btn-quiet px-3 py-1.5 text-xs"
                       >
                         Join
                       </button>
                     </div>
                   </div>
                 ) : (
-                  <div className="space-y-2 rounded-lg border border-[#81b64c]/40 bg-[#81b64c]/10 p-2.5">
+                  <div className="space-y-2 rounded-lg border border-accent/40 bg-accent/10 p-2.5">
                     <div className="flex items-center justify-between gap-2">
                       <div>
                         <div className="flex items-center gap-2">
-                          <span className="font-mono text-xs font-black text-[#629924] dark:text-[#a3d160]">
+                          <span className="font-mono text-xs font-black text-accent-text">
                             Room {props.roomState.roomId}
                           </span>
-                          <span className="text-stone-400">·</span>
-                          <span className="text-xs font-bold text-stone-700 dark:text-white">
+                          <span className="text-ink-3">·</span>
+                          <span className="text-xs font-bold text-ink">
                             {props.roomState.connectedCount >= 2 || props.roomState.guestId
                               ? 'Opponent Connected · Live'
                               : 'Waiting for friend…'}
@@ -290,7 +278,7 @@ export function MatchArenaPanel(props: MatchArenaPanelProps) {
                       <button
                         type="button"
                         onClick={props.onLeaveInviteRoom}
-                        className="shrink-0 rounded bg-stone-200 px-2 py-0.5 text-[11px] font-bold text-stone-700 hover:text-rose-600 dark:bg-[#302e2b] dark:text-[#bababa]"
+                        className="shrink-0 rounded-md border border-line bg-sunken px-2 py-0.5 text-2xs font-bold text-ink-2 transition hover:text-rose-600"
                       >
                         Leave
                       </button>
@@ -301,56 +289,54 @@ export function MatchArenaPanel(props: MatchArenaPanelProps) {
                         type="text"
                         readOnly
                         value={inviteUrl}
-                        className="min-w-0 flex-1 rounded-lg border border-stone-300 bg-white px-2 py-1 font-mono text-[11px] text-stone-700 focus:outline-none dark:border-white/10 dark:bg-[#1f1e1b] dark:text-[#bababa]"
+                        className="field min-w-0 flex-1 px-2 py-1 font-mono text-2xs"
                       />
                       <button
                         type="button"
                         onClick={copyInviteLink}
-                        className="shrink-0 rounded-lg bg-[#81b64c] px-2.5 py-1 text-xs font-extrabold text-white transition hover:bg-[#72a341]"
+                        className="btn-primary shrink-0 px-2.5 py-1 text-2xs"
                       >
                         {linkCopied ? '✓ Copied!' : 'Copy Link'}
                       </button>
                     </div>
 
-                    {/* Match controls: Resign / Draw / Rematch */}
+                    {/* Match controls: resign / draw / rematch */}
                     <div className="flex flex-wrap items-center gap-1.5 pt-0.5">
                       <button
                         type="button"
                         onClick={props.onResign}
-                        className="rounded-md bg-stone-200 px-2 py-1 text-[11px] font-bold text-rose-600 dark:bg-[#302e2b] dark:text-rose-400"
+                        className="rounded-md border border-line bg-sunken px-2 py-1 text-2xs font-bold text-rose-600 dark:text-rose-400"
                       >
                         🏳 Resign
                       </button>
                       <button
                         type="button"
                         onClick={props.onAgreeDraw}
-                        className="rounded-md bg-stone-200 px-2 py-1 text-[11px] font-bold text-stone-700 dark:bg-[#302e2b] dark:text-[#bababa]"
+                        className="rounded-md border border-line bg-sunken px-2 py-1 text-2xs font-bold text-ink-2"
                       >
                         ½ Draw
                       </button>
                       <button
                         type="button"
                         onClick={props.onRequestRematch}
-                        className="rounded-md bg-stone-200 px-2 py-1 text-[11px] font-bold text-[#629924] dark:bg-[#302e2b] dark:text-[#a3d160]"
+                        className="rounded-md border border-line bg-sunken px-2 py-1 text-2xs font-bold text-accent-text"
                       >
                         ⟳ Rematch
                       </button>
                     </div>
 
-                    {/* Live Room Chat */}
-                    <div className="border-t border-stone-200/70 pt-2 dark:border-white/10">
+                    {/* Live room chat */}
+                    <div className="border-t border-line pt-2">
                       <div className="scroll-thin max-h-20 space-y-1 overflow-y-auto pr-1 text-xs">
                         {props.roomState.chat.length === 0 ? (
-                          <p className="text-[11px] text-stone-400 dark:text-[#7c7a77]">
+                          <p className="text-2xs text-ink-3">
                             Match chat ready — say hello!
                           </p>
                         ) : (
                           props.roomState.chat.map((c) => (
-                            <div key={c.id} className="text-[11px]">
-                              <strong className="font-bold text-stone-800 dark:text-white">
-                                {c.sender}:
-                              </strong>{' '}
-                              <span className="text-stone-600 dark:text-[#bababa]">{c.text}</span>
+                            <div key={c.id} className="text-2xs">
+                              <strong className="font-bold text-ink">{c.sender}:</strong>{' '}
+                              <span className="text-ink-2">{c.text}</span>
                             </div>
                           ))
                         )}
@@ -369,11 +355,11 @@ export function MatchArenaPanel(props: MatchArenaPanelProps) {
                           value={chatInput}
                           onChange={(e) => setChatInput(e.target.value)}
                           placeholder="Message opponent…"
-                          className="min-w-0 flex-1 rounded-md border border-stone-300 bg-white px-2 py-1 text-xs text-stone-800 focus:border-[#81b64c] focus:outline-none dark:border-white/10 dark:bg-[#1f1e1b] dark:text-white"
+                          className="field min-w-0 flex-1 px-2 py-1"
                         />
                         <button
                           type="submit"
-                          className="rounded-md bg-stone-200 px-2.5 py-1 text-xs font-bold text-stone-700 dark:bg-[#302e2b] dark:text-white"
+                          className="btn-quiet px-2.5 py-1 text-xs"
                         >
                           Send
                         </button>
@@ -383,7 +369,7 @@ export function MatchArenaPanel(props: MatchArenaPanelProps) {
                 )}
               </div>
             ) : (
-              <div className="rounded-lg border border-stone-200/80 bg-white p-2 text-xs text-stone-600 dark:border-white/10 dark:bg-[#262522] dark:text-[#bababa]">
+              <div className="rounded-lg border border-line bg-surface p-2 text-xs text-ink-2">
                 Pass &amp; Play active — both White and Black moves can be played on this board.
               </div>
             )}
@@ -393,24 +379,24 @@ export function MatchArenaPanel(props: MatchArenaPanelProps) {
 
       {/* LEARN MODE PLAYER SUGGESTIONS & 3-LINE MULTI-PV OR COMPETITIVE SHIELD */}
       {props.isAssistanceHidden ? (
-        <div className="rounded-xl border border-amber-500/40 bg-amber-500/10 p-3.5">
-          <h3 className="text-xs font-extrabold tracking-wider text-amber-700 uppercase dark:text-amber-300">
+        <div className="rounded-xl border border-amber-500/40 bg-amber-500/10 p-3">
+          <h3 className="text-2xs font-extrabold tracking-wider text-amber-700 uppercase dark:text-amber-300">
             {props.mode === 'pvp'
               ? '🔒 Live Multiplayer Fair-Play Lock'
               : '🔒 Competitive Rated Match · Fair-Play Lock'}
           </h3>
-          <p className="mt-1 text-xs leading-relaxed text-stone-600 dark:text-[#bababa]">
+          <p className="mt-1 text-xs leading-relaxed text-ink-2">
             Coach suggestions, 3-line arrows, evaluation bar, and takebacks are locked during active competitive play. Full Game Review unlocks when the match ends!
           </p>
 
           {props.mode === 'hve' && (
             <div className="mt-3 flex items-center justify-between border-t border-amber-500/20 pt-2.5 text-xs">
-              <div className="font-mono tabular-nums text-stone-700 dark:text-white">
+              <div className="font-mono tabular-nums text-ink">
                 Your Elo: <strong>{props.compElo}</strong> · Bot: <strong>{currentBotElo}</strong>
                 {props.lastEloDelta !== null && (
                   <span
                     className={`ml-2 font-bold ${
-                      props.lastEloDelta >= 0 ? 'text-[#81b64c]' : 'text-rose-500'
+                      props.lastEloDelta >= 0 ? 'text-accent' : 'text-rose-500'
                     }`}
                   >
                     ({props.lastEloDelta >= 0 ? `+${props.lastEloDelta}` : props.lastEloDelta})
@@ -420,7 +406,7 @@ export function MatchArenaPanel(props: MatchArenaPanelProps) {
               <button
                 type="button"
                 onClick={props.onResign}
-                className="rounded-lg bg-rose-500/20 px-2.5 py-1 text-[11px] font-extrabold text-rose-600 transition hover:bg-rose-500/30 dark:text-rose-300"
+                className="rounded-md bg-rose-500/20 px-2.5 py-1 text-2xs font-extrabold text-rose-600 transition hover:bg-rose-500/30 dark:text-rose-300"
               >
                 🏳 Resign
               </button>
@@ -444,5 +430,3 @@ export function MatchArenaPanel(props: MatchArenaPanelProps) {
     </div>
   );
 }
-
-

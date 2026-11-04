@@ -189,7 +189,7 @@ export function BoardPanel(props: BoardPanelProps) {
 
   return (
     <div
-      className={`relative overflow-hidden rounded-md shadow-2xl ring-1 ${palette.frame}`}
+      className={`relative overflow-hidden rounded-lg shadow-board ring-1 ${palette.frame}`}
       style={
         props.boardWidth
           ? { width: `${props.boardWidth}px`, height: `${props.boardWidth}px` }
@@ -224,7 +224,7 @@ export function BoardPanel(props: BoardPanelProps) {
         >
           <span
             title={`${badgeOverlay.meta.label}: ${badgeOverlay.meta.description}`}
-            className="flex h-5 min-w-5 translate-x-1 -translate-y-1 items-center justify-center rounded-full px-1 text-[10px] font-extrabold text-white shadow-md ring-2 ring-black/25"
+            className="flex h-5 min-w-5 translate-x-1 -translate-y-1 items-center justify-center rounded-full px-1 text-2xs font-extrabold text-white shadow-card ring-2 ring-black/25"
             style={{ backgroundColor: badgeOverlay.meta.badgeBg }}
           >
             {badgeOverlay.meta.symbol}

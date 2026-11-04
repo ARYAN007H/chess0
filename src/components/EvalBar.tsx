@@ -27,7 +27,7 @@ export function EvalBar({ evalPov, orientation, locked, heightPx }: EvalBarProps
 
   return (
     <div
-      className="relative flex w-6 shrink-0 flex-col overflow-hidden rounded-md bg-[#403d39] shadow-md ring-1 ring-black/30 select-none"
+      className="relative flex w-6 shrink-0 flex-col overflow-hidden rounded-md bg-[#403d39] shadow-card ring-1 ring-black/25 select-none"
       style={heightPx ? { height: `${heightPx}px` } : { height: '100%' }}
       title={locked ? 'Evaluation hidden during Competitive / Puzzle play' : undefined}
     >
@@ -45,7 +45,7 @@ export function EvalBar({ evalPov, orientation, locked, heightPx }: EvalBarProps
       {/* Score label pinned inside top or bottom of the bar like Chess.com */}
       {!locked && (
         <span
-          className={`pointer-events-none absolute inset-x-0 text-center font-mono text-[9.5px] font-extrabold tracking-tighter tabular-nums ${
+          className={`pointer-events-none absolute inset-x-0 text-center font-mono text-2xs font-extrabold tracking-tighter tabular-nums ${
             (whiteAhead && whiteAtBottom) || (!whiteAhead && !whiteAtBottom)
               ? 'bottom-1.5 text-[#403d39]'
               : 'top-1.5 text-[#ffffff]'

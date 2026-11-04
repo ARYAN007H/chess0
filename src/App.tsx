@@ -464,9 +464,9 @@ export default function App() {
   const boardRowWidth = boardWidth + 36;
 
   return (
-    <div className="flex min-h-screen flex-col bg-[#f3f2ee] text-stone-900 dark:bg-[#302e2b] dark:text-[#e8e6e3] lg:h-screen lg:flex-row lg:overflow-hidden">
+    <div className="flex min-h-screen flex-col bg-bg text-ink lg:h-screen lg:flex-row lg:overflow-hidden">
       {/* Left Vertical Chess.com Studio Sidebar (#21201d) */}
-      <aside className="flex shrink-0 flex-row items-center justify-between border-b border-black/20 bg-[#21201d] px-3 py-2 text-[#c4c2bd] lg:w-44 lg:flex-col lg:items-stretch lg:justify-between lg:border-b-0 lg:border-r lg:border-black/30 lg:px-2.5 lg:py-3.5">
+      <aside className="flex shrink-0 flex-row items-center justify-between border-b border-black/20 bg-chrome px-3 py-2 text-chrome-ink lg:w-44 lg:flex-col lg:items-stretch lg:justify-between lg:border-b-0 lg:border-r lg:border-black/30 lg:px-2.5 lg:py-3">
         <div className="flex items-center gap-3 lg:flex-col lg:items-stretch lg:gap-4">
           {/* Chess0 Wordmark */}
           <button
@@ -474,16 +474,16 @@ export default function App() {
             onClick={() => handleNavSelect('arena')}
             className="flex items-center gap-2 px-1.5 text-left focus:outline-none"
           >
-            <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-[#81b64c] text-white shadow-xs">
+            <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-accent text-on-accent shadow-card">
               <svg viewBox="0 0 24 24" fill="currentColor" className="h-5 w-5">
                 <path d="M17 19H7v-1.8l1.6-1.6c.3-2.8-.4-4.8-1.6-6 1-1.3 2.4-2 4.1-2-.4-.9-.4-2 .4-3 1.2 0 2.2.6 2.8 1.5 2.1.4 3.9 2.1 4.2 4.6.2 1.1-.2 2-1.1 2-.7 0-1.3-.4-1.6-1.1-.4 1.3-.1 3 .9 4.4l.7 1.4V19zm-11 2h12v1.5H6V21z" />
               </svg>
             </span>
             <div>
               <div className="text-base font-black leading-none tracking-tight text-white">
-                Chess<span className="text-[#81b64c]">0</span>
+                Chess<span className="text-accent">0</span>
               </div>
-              <div className="hidden text-[10px] font-bold text-[#8b8987] lg:block">
+              <div className="hidden text-2xs font-bold text-chrome-ink-3 lg:block">
                 v3 Grandmaster
               </div>
             </div>
@@ -503,8 +503,8 @@ export default function App() {
                   onClick={() => handleNavSelect(item.id)}
                   className={`flex items-center justify-between rounded-lg px-2.5 py-2 text-xs font-extrabold transition ${
                     active
-                      ? 'bg-[#81b64c] text-white shadow-xs'
-                      : 'text-[#c4c2bd] hover:bg-white/5 hover:text-white'
+                      ? 'bg-accent text-on-accent shadow-card'
+                      : 'text-chrome-ink hover:bg-white/5 hover:text-white'
                   }`}
                 >
                   <span className="flex items-center gap-2.5">
@@ -516,7 +516,7 @@ export default function App() {
                       className={`hidden rounded px-1.5 py-0.5 font-mono text-[10px] font-extrabold lg:inline ${
                         active
                           ? 'bg-black/25 text-white'
-                          : 'bg-white/10 text-[#95c95e]'
+                          : 'bg-white/10 text-chrome-accent'
                       }`}
                     >
                       {item.badge}
@@ -539,7 +539,7 @@ export default function App() {
                 game.createInviteRoom('white');
               }
             }}
-            className="whitespace-nowrap rounded-lg bg-[#383632] px-2.5 py-2 text-xs font-extrabold text-white transition hover:bg-[#45433e]"
+            className="whitespace-nowrap rounded-lg bg-chrome-raised px-2.5 py-2 text-xs font-extrabold text-white transition hover:bg-chrome-raised-hover"
           >
             Invite Friend
           </button>
@@ -548,14 +548,14 @@ export default function App() {
             <button
               type="button"
               onClick={() => game.setSoundOn(!game.soundOn)}
-              className="rounded-md bg-[#2c2b28] px-2 py-1.5 text-[11px] font-bold text-[#c4c2bd] transition hover:bg-[#383632] hover:text-white"
+              className="rounded-md bg-chrome-raised px-2 py-1.5 text-2xs font-bold text-chrome-ink transition hover:bg-chrome-raised-hover hover:text-white"
             >
               {game.soundOn ? 'Sound On' : 'Muted'}
             </button>
             <button
               type="button"
               onClick={() => game.setTheme(game.theme === 'dark' ? 'light' : 'dark')}
-              className="rounded-md bg-[#2c2b28] px-2 py-1.5 text-[11px] font-bold text-[#c4c2bd] transition hover:bg-[#383632] hover:text-white"
+              className="rounded-md bg-chrome-raised px-2 py-1.5 text-2xs font-bold text-chrome-ink transition hover:bg-chrome-raised-hover hover:text-white"
             >
               {game.theme === 'dark' ? 'Light UI' : 'Dark UI'}
             </button>
@@ -563,7 +563,7 @@ export default function App() {
               type="button"
               onClick={() => game.setSearchThreads(game.searchThreads >= 4 ? 1 : game.searchThreads + 1)}
               title="Engine worker threads (multi-core search fan-out)"
-              className="rounded-md bg-[#2c2b28] px-2 py-1.5 text-[11px] font-bold text-[#c4c2bd] transition hover:bg-[#383632] hover:text-white"
+              className="rounded-md bg-chrome-raised px-2 py-1.5 text-2xs font-bold text-chrome-ink transition hover:bg-chrome-raised-hover hover:text-white"
             >
               Threads ×{game.searchThreads}
             </button>
@@ -573,7 +573,7 @@ export default function App() {
                 game.setSearchThreads(defaultThreadCount());
               }}
               title="Reset search threads to the recommended count for this machine"
-              className="rounded-md bg-[#2c2b28] px-2 py-1.5 text-[11px] font-bold text-[#c4c2bd] transition hover:bg-[#383632] hover:text-white"
+              className="rounded-md bg-chrome-raised px-2 py-1.5 text-2xs font-bold text-chrome-ink transition hover:bg-chrome-raised-hover hover:text-white"
             >
               Auto
             </button>
@@ -670,7 +670,7 @@ export default function App() {
         </section>
 
         {/* Right Column: Unified Chess.com Full-Height Studio Dock (#262522) */}
-        <section className="flex w-full shrink-0 flex-col border-t border-stone-300 bg-white dark:border-black/40 dark:bg-[#262522] lg:h-full lg:w-[395px] lg:border-l lg:border-t-0 xl:w-[430px]">
+        <section className="flex w-full shrink-0 flex-col border-t border-line bg-surface lg:h-full lg:w-[395px] lg:border-l lg:border-t-0 xl:w-[430px]">
           {/* Top Coach Viktor Speech Bubble Header */}
           <CoachBanner
             message={coachMessage}
@@ -679,7 +679,7 @@ export default function App() {
           />
 
           {/* Scrollable Active Tab Body + Move Notation */}
-          <div className="scroll-thin flex-1 space-y-3 overflow-y-auto p-3.5">
+          <div className="scroll-thin flex-1 space-y-3 overflow-y-auto p-3">
             {activeTab === 'arena' && (
               <MatchArenaPanel
                 mode={game.mode}
@@ -747,8 +747,8 @@ export default function App() {
 
             {activeTab === 'analysis' &&
               (game.isAssistanceHidden ? (
-                <div className="rounded-lg border border-amber-500/35 bg-amber-500/10 p-3.5 text-xs text-stone-700 dark:text-[#d5d4d0]">
-                  <strong className="block font-extrabold text-amber-800 dark:text-amber-300">
+                <div className="rounded-xl border border-amber-500/35 bg-amber-500/10 p-3 text-xs text-ink-2">
+                  <strong className="block font-extrabold text-amber-700 dark:text-amber-300">
                     Game Review Locked During Active Rated Match
                   </strong>
                   Finish or resign the current competitive match to unlock the Evaluation Graph, Accuracy %, and Move Coach breakdown.
@@ -772,8 +772,8 @@ export default function App() {
 
             {activeTab === 'openings' &&
               (game.isAssistanceHidden ? (
-                <div className="rounded-lg border border-amber-500/35 bg-amber-500/10 p-3.5 text-xs text-stone-700 dark:text-[#d5d4d0]">
-                  <strong className="block font-extrabold text-amber-800 dark:text-amber-300">
+                <div className="rounded-xl border border-amber-500/35 bg-amber-500/10 p-3 text-xs text-ink-2">
+                  <strong className="block font-extrabold text-amber-700 dark:text-amber-300">
                     Opening Explorer Locked During Active Rated Match
                   </strong>
                   Switch to Coach Mode or finish the current match to browse master continuations.
@@ -828,7 +828,7 @@ export default function App() {
           </div>
 
           {/* Pinned Bottom Chess.com Transport & Action Bar */}
-          <footer className="flex shrink-0 items-center justify-between gap-2 border-t border-stone-200 bg-stone-100 px-3.5 py-2.5 dark:border-black/40 dark:bg-[#1f1e1b]">
+          <footer className="flex shrink-0 items-center justify-between gap-2 border-t border-line bg-sunken px-3 py-2">
             <div className="flex items-center gap-1">
               <button
                 type="button"
@@ -836,7 +836,7 @@ export default function App() {
                 aria-label="First move"
                 disabled={game.activePly === 0}
                 onClick={game.stepFirst}
-                className="rounded-md bg-white px-2.5 py-1.5 font-mono text-xs font-extrabold text-stone-700 shadow-2xs transition hover:bg-stone-50 disabled:opacity-35 dark:bg-[#2c2b28] dark:text-[#d5d4d0] dark:hover:bg-[#383632]"
+                className="rounded-md border border-line bg-raised px-2.5 py-1.5 font-mono text-xs font-extrabold text-ink-2 transition hover:bg-raised-hover hover:text-ink disabled:opacity-35"
               >
                 |◀
               </button>
@@ -846,7 +846,7 @@ export default function App() {
                 aria-label="Previous move"
                 disabled={game.activePly === 0}
                 onClick={game.stepPrev}
-                className="rounded-md bg-white px-2.5 py-1.5 font-mono text-xs font-extrabold text-stone-700 shadow-2xs transition hover:bg-stone-50 disabled:opacity-35 dark:bg-[#2c2b28] dark:text-[#d5d4d0] dark:hover:bg-[#383632]"
+                className="rounded-md border border-line bg-raised px-2.5 py-1.5 font-mono text-xs font-extrabold text-ink-2 transition hover:bg-raised-hover hover:text-ink disabled:opacity-35"
               >
                 ◀
               </button>
@@ -856,7 +856,7 @@ export default function App() {
                 aria-label="Next move"
                 disabled={game.activePly >= game.history.length}
                 onClick={game.stepNext}
-                className="rounded-md bg-white px-2.5 py-1.5 font-mono text-xs font-extrabold text-stone-700 shadow-2xs transition hover:bg-stone-50 disabled:opacity-35 dark:bg-[#2c2b28] dark:text-[#d5d4d0] dark:hover:bg-[#383632]"
+                className="rounded-md border border-line bg-raised px-2.5 py-1.5 font-mono text-xs font-extrabold text-ink-2 transition hover:bg-raised-hover hover:text-ink disabled:opacity-35"
               >
                 ▶
               </button>
@@ -866,7 +866,7 @@ export default function App() {
                 aria-label="Latest position"
                 disabled={!game.isViewingHistory}
                 onClick={game.stepLast}
-                className="rounded-md bg-white px-2.5 py-1.5 font-mono text-xs font-extrabold text-stone-700 shadow-2xs transition hover:bg-stone-50 disabled:opacity-35 dark:bg-[#2c2b28] dark:text-[#d5d4d0] dark:hover:bg-[#383632]"
+                className="rounded-md border border-line bg-raised px-2.5 py-1.5 font-mono text-xs font-extrabold text-ink-2 transition hover:bg-raised-hover hover:text-ink disabled:opacity-35"
               >
                 ▶|
               </button>
@@ -882,7 +882,7 @@ export default function App() {
                   game.mode === 'puzzle'
                 }
                 onClick={game.takeback}
-                className="rounded-md bg-white px-2.5 py-1.5 text-xs font-bold text-stone-700 shadow-2xs transition hover:bg-stone-50 disabled:opacity-35 dark:bg-[#2c2b28] dark:text-[#d5d4d0] dark:hover:bg-[#383632]"
+                className="rounded-md border border-line bg-raised px-2.5 py-1.5 text-xs font-bold text-ink-2 transition hover:bg-raised-hover hover:text-ink disabled:opacity-35"
               >
                 Undo
               </button>
@@ -890,7 +890,7 @@ export default function App() {
                 type="button"
                 title="Flip board"
                 onClick={game.flipBoard}
-                className="rounded-md bg-white px-2.5 py-1.5 text-xs font-bold text-stone-700 shadow-2xs transition hover:bg-stone-50 dark:bg-[#2c2b28] dark:text-[#d5d4d0] dark:hover:bg-[#383632]"
+                className="rounded-md border border-line bg-raised px-2.5 py-1.5 text-xs font-bold text-ink-2 transition hover:bg-raised-hover hover:text-ink"
               >
                 Flip
               </button>
@@ -903,7 +903,7 @@ export default function App() {
                     game.newGame();
                   }
                 }}
-                className="btn-chess-green rounded-md px-3 py-1.5 text-xs font-extrabold"
+                className="btn-primary px-3 py-1.5 text-xs"
               >
                 {game.mode === 'puzzle' ? 'Next Puzzle' : 'New Game'}
               </button>
