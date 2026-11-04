@@ -6,8 +6,12 @@
  *     game; the accumulator stack is live, so evals read the current slot.
  *     Times eval calls only (makeMove cost sits between timed regions).
  *   Mode B (transient/scratch): freshly parsed / cloned positions (no live
- *     stack) — the new code recomputes into a shared scratch slot. Cost
- *     should match the old implementation (~1.0x): same work, zero alloc.
+ *     stack) — the new code recomputes into a shared scratch slot. Measured
+ *     ~0.66-0.74x of the old implementation (not ~1.0x): refreshSlot
+ *     maintains 4 accumulator rows per piece (2 perspectives x 2 weight
+ *     views) where the old code maintained 2 — inherent to the 4-slot
+ *     layout. Bounded impact: the search hot path always rides live stacks
+ *     (mode A); scratch mode serves scripts and one-off evals only.
  *
  * Usage: npx tsx scripts/nnue-speed.ts [netPath]
  */

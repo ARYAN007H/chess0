@@ -57,7 +57,7 @@ for (let ply = 0; ply < 200; ply++) {
   const r = searchPositionV3(pos, { movetime: MOVETIME, multiPv: 1 });
   const side = pos.stm === 0 ? 'W' : 'B';
   const who = nnueToMove ? 'nnue' : 'base';
-  const score = r.scoreMate !== undefined ? `#M${r.scoreMate}` : `${(r.scoreCp / 100).toFixed(2)}`;
+  const score = r.scoreMate !== undefined ? `#M${r.scoreMate}` : `${((r.scoreCp ?? 0) / 100).toFixed(2)}`;
   console.log(
     `ply ${String(ply).padStart(3)} ${side}(${who}) ${uci(r.bestMove).padEnd(6)} score(stm) ${score.padStart(7)} d${r.depth} nodes ${r.nodes}`,
   );

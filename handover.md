@@ -243,10 +243,11 @@ uniform data → #3/#4/#5 cheap wins → arch v2 → WASM on top of incremental.
   nnueStamp guards net reloads; nnueValidFrom guards mid-line bootstraps; transient evals (no live
   stack) recompute into a shared module scratch slot (zero alloc, cost ≈ old full recompute —
   it does 2× layer-1 arithmetic by computing all 4 views).
-- **eval-cache for the override** (evalV3.ts): override scores now flow through the eval cache;
-  setEvalOverride bumps evalCacheGen on change → no cross-eval pollution. NOTE: match.ts toggles
-  the override EVERY move → gen bump per move → v3nnue gets no cache hits in match conditions
-  (correct, just no benefit there). searchV3 node-rate gains came from the accumulator path alone.
+- **eval-cache for the override** (evalV3.ts): override scores BYPASS the eval cache entirely —
+  evalV3WhitePov returns evalOverride(pos) before any cache read/write (structurally pollution-
+  free; no cache entry can mix hand-eval and NNUE scores). setEvalOverride does NOT bump
+  evalCacheGen (only invalidateEvalCaches/clearEvalCaches do). Correction of an earlier
+  description that claimed cache-flow + gen-bumps (review P2-2, 2026-11-05).
 - **Speed/sanity kit** (keep using): `scripts/nnue-speed.ts` (old-vs-new parity + µs, two modes),
   `scripts/nnue-nodes.ts` (alternating fixed-depth node rates), `scripts/nnue-probe-game.ts`
   (move-by-move single game; CLEAR_TT=1 env toggles per-ply TT clear), `scripts/nnue-verify.ts`
