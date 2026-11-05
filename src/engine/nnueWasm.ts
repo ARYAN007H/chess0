@@ -20,7 +20,7 @@ const MAX_H2 = 256;
 
 interface WasmExports {
   memory: WebAssembly.Memory;
-  set_dims(h1: number, h2: number): number;
+  set_dims(h1: number, h2: number, act: number, qa: number): number;
   w2t_ptr(): number;
   w3_ptr(): number;
   acc_ptr(): number;
@@ -62,12 +62,20 @@ export function nnueWasmActive(): boolean {
 
 /**
  * Writes the net's weights (layer-2 TRANSPOSED to out-major for contiguous
- * dot products) and dimensions. Returns false → caller uses the JS path.
+ * dot products), dimensions and activation scheme (act: 0=crelu, 1=screlu;
+ * qa = the net's QA clamp bound). Returns false → caller uses the JS path.
  */
-export function nnueWasmLoadNet(h1: number, h2: number, w2: Int8Array, w3: Int8Array): boolean {
+export function nnueWasmLoadNet(
+  h1: number,
+  h2: number,
+  w2: Int8Array,
+  w3: Int8Array,
+  act: 'crelu' | 'screlu',
+  qa: number,
+): boolean {
   if (!nnueWasmActive() || exports === null) return false;
   if (h1 > MAX_H1 || h2 > MAX_H2 || h1 % 8 !== 0 || h2 % 8 !== 0) return false;
-  if (exports.set_dims(h1, h2) !== 0) return false;
+  if (exports.set_dims(h1, h2, act === 'screlu' ? 1 : 0, qa) !== 0) return false;
   const mem = new Uint8Array(exports.memory.buffer);
   const w2tOff = exports.w2t_ptr();
   // transpose: w2 is in-major [(2h1) rows × h2 cols]; w2t is [j][i] out-major

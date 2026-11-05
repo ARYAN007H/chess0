@@ -1,20 +1,25 @@
 /**
- * NNUE inference — 768×32×2 → 32 → 1, fully-quantized (int16/int8).
+ * NNUE inference — 768×H1×2 → H2 → 1, fully-quantized (int16/int8).
  *
  * Architecture (must match training/nnue_train.py exactly):
  *   - Input: 768 = 12 piece-types × 64 squares, computed from the side to
  *     move's perspective (own pieces types 0-5, opponent 6-11; board flipped
  *     when black is to move). Two views: stm-view and opponent-view.
  *   - Layer 1: per-view accumulator = b1 + Σ w1[feature] over the ~32 active
- *     features (int16 weights × QA=1024 scale).
- *   - ClippedReLU: clamp accumulator to [0, QA].
- *   - Layer 2: 2×H1 → H2 int8 weights × QB=64, then >>6 and clamp to [0, QA].
+ *     features (int16 weights × QA scale).
+ *   - Activation, flagged by the file magic:
+ *       crelu  (C0NNUE01, QA=1024): clamp(acc, 0, QA)
+ *       screlu (C0NNUE02, QA=400):  clamp(acc, 0, QA)²   (v2 arch)
+ *   - Layer 2: 2×H1 → H2 int8 weights × QB=64, then /QB (crelu: >>6) or
+ *     /(QB×QA) (screlu: act² moved l2 onto the QB×QA scale) and clamp to
+ *     [0, QA] (screlu re-clamps the squared l1 act to [0, QA] first).
  *   - Layer 3: H2 → 1 int8 weights; cp = y × SCALE / (QB×QA) with SCALE=400.
  *
  * Weight file layout (`data/nnue-v1.bin`, little-endian):
- *   magic "C0NNUE01" (8B) | u32 IN | u32 H1 | u32 H2 | i16 QA | i16 QB |
+ *   magic "C0NNUE01|02" (8B) | u32 IN | u32 H1 | u32 H2 | i16 QA | i16 QB |
  *   i16 SCALE | w1 i16[2×768×H1] (view→feature→row, feature-major for cache) |
  *   b1 i16[2×H1] | w2 i8[2×H1×H2] (in-major) | w3 i8[H2]
+ *   QA is scheme-locked to the magic (crelu→1024, screlu→400) and validated.
  *
  * The feature extraction and every quantization step are mirrored in
  * nnue_train.py; a mismatch between the two silently produces a bad net, so
@@ -39,15 +44,22 @@ import { MAX_HIST, WHITE } from './types';
 import { nnueWasmActive, nnueWasmEvalL23, nnueWasmInit, nnueWasmLoadNet } from './nnueWasm';
 
 const IN = 768;
-const QA = 1024;
 const QB = 64;
 const SCALE = 400;
 
-const MAGIC = [0x43, 0x30, 0x4e, 0x4e, 0x55, 0x45, 0x30, 0x31]; // "C0NNUE01"
+// Two file schemes, flagged by the magic's last byte (mirrors the trainer):
+//   "C0NNUE01" = v1 crelu,  QA=1024 — act = clamp(acc, 0, QA)
+//   "C0NNUE02" = v2 screlu, QA=400  — act = clamp(acc, 0, QA)²  (l2 sums stay
+//                i32-safe: 64 × 124 × 400² ≈ 1.27e9 < 2^31)
+const MAGIC_V1 = [0x43, 0x30, 0x4e, 0x4e, 0x55, 0x45, 0x30, 0x31]; // "C0NNUE01"
+const MAGIC_V2 = [0x43, 0x30, 0x4e, 0x4e, 0x55, 0x45, 0x30, 0x32]; // "C0NNUE02"
+const QA_BY_ACT = { crelu: 1024, screlu: 400 } as const;
 
 interface NnueNet {
   h1: number;
   h2: number;
+  act: 'crelu' | 'screlu';
+  qa: number;
   w1: Int16Array; // 2 * h1 * 768 (view-major)
   b1: Int16Array; // 2 * h1
   w2: Int8Array; // (2 * h1) * h2 (in-major)
@@ -55,6 +67,10 @@ interface NnueNet {
 }
 
 let net: NnueNet | null = null;
+
+// True iff the wasm module holds THIS net's weights (set by loadNnueWeights
+// from nnueWasmLoadNet's result; the fallback JS loop runs otherwise).
+let wasmLive = false;
 
 // Bumped on every (re)load/clear. Positions stamp their accumulator stack
 // against it; a mismatch forces a full refresh before the next eval. This is
@@ -66,9 +82,13 @@ let l2 = new Int32Array(0);
 
 /** Loads a quantized net from bytes; returns a description or throws. */
 export function loadNnueWeights(bytes: Uint8Array): string {
+  // Magic's last byte picks the scheme ('1' = v1 crelu, '2' = v2 screlu).
+  const isV2 = bytes[7] === 0x32; // '2'
+  const magic = isV2 ? MAGIC_V2 : MAGIC_V1;
   for (let i = 0; i < 8; i++) {
-    if (bytes[i] !== MAGIC[i]) throw new Error('nnue: bad magic');
+    if (bytes[i] !== magic[i]) throw new Error('nnue: bad magic');
   }
+  const act: 'crelu' | 'screlu' = isV2 ? 'screlu' : 'crelu';
   const dv = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
   const inp = dv.getUint32(8, true);
   const h1 = dv.getUint32(12, true);
@@ -76,8 +96,8 @@ export function loadNnueWeights(bytes: Uint8Array): string {
   const qa = dv.getInt16(20, true);
   const qb = dv.getInt16(22, true);
   const scale = dv.getInt16(24, true);
-  if (inp !== IN || qa !== QA || qb !== QB || scale !== SCALE) {
-    throw new Error(`nnue: header mismatch (in=${inp} qa=${qa} qb=${qb} scale=${scale})`);
+  if (inp !== IN || qb !== QB || scale !== SCALE || qa !== QA_BY_ACT[act]) {
+    throw new Error(`nnue: header mismatch (in=${inp} qa=${qa} qb=${qb} scale=${scale}, act=${act})`);
   }
   if (h1 < 1 || h1 > 8192 || h2 < 1 || h2 > 8192) {
     throw new Error(`nnue: implausible dims h1=${h1} h2=${h2}`);
@@ -97,15 +117,18 @@ export function loadNnueWeights(bytes: Uint8Array): string {
   for (let i = 0; i < w2Len; i++, off += 1) w2[i] = dv.getInt8(off);
   const w3 = new Int8Array(h2);
   for (let i = 0; i < h2; i++, off += 1) w3[i] = dv.getInt8(off);
-  net = { h1, h2, w1, b1, w2, w3 };
+  net = { h1, h2, act, qa, w1, b1, w2, w3 };
   l2 = new Int32Array(h2);
   loadStamp++;
   // WASM SIMD path (layer 2/3): init + write transposed weights. Returns
   // false on unsupported environments or oversized dims — the JS loop below
-  // stays the fallback. Bit-exact either way (enforced by tests).
+  // stays the fallback. Bit-exact either way (enforced by tests). The result
+  // MUST gate evalNnueWhitePov's wasm branch: a failed load leaves the
+  // module holding a PREVIOUS net's weights, which would silently poison
+  // every eval of the new one.
   nnueWasmInit();
-  nnueWasmLoadNet(h1, h2, w2, w3);
-  return `nnue: loaded net (768×${h1}×2→${h2}→1, ${(bytes.length / 1024).toFixed(0)}KB)`;
+  wasmLive = nnueWasmLoadNet(h1, h2, w2, w3, act, qa);
+  return `nnue: loaded net (768×${h1}×2→${h2}→1 ${act} QA=${qa}, ${(bytes.length / 1024).toFixed(0)}KB)`;
 }
 
 export function nnueLoaded(): boolean {
@@ -116,6 +139,8 @@ export function nnueLoaded(): boolean {
 export interface NnueNetView {
   h1: number;
   h2: number;
+  act: 'crelu' | 'screlu';
+  qa: number;
   w1: Int16Array;
   b1: Int16Array;
   w2: Int8Array;
@@ -263,7 +288,8 @@ export function nnueAccRemove(pos: Position, slot: number, piece: number, sq: nu
 export function evalNnueWhitePov(pos: Position): number {
   const n = net;
   if (n === null) return 0;
-  const { h1, h2, w2, w3 } = n;
+  const { h1, h2, w2, w3, act, qa } = n;
+  const screlu = act === 'screlu';
   const white = pos.stm === WHITE;
   // Pick the accumulator source: live stack slot, or a scratch recompute.
   let buf: Int32Array;
@@ -289,37 +315,52 @@ export function evalNnueWhitePov(pos: Position): number {
   const off1 = white ? base + 3 * h1 : base + 2 * h1;
 
   let yRaw: number;
-  if (nnueWasmActive()) {
+  if (wasmLive && nnueWasmActive()) {
     // WASM SIMD path — bit-exact with the JS loop below (enforced by the
-    // nnue test suite, which exercises whichever path is active).
+    // nnue test suite, which exercises whichever path is active). The
+    // kernel holds this net's act/qa from loadNnueWeights.
     yRaw = nnueWasmEvalL23(buf, off0, off1, h1);
   } else {
-    // Layers 2+3 fused, ClippedReLU applied inline while reading the buffer
-    // (int32-safe: ≤64×127×1024 ≈ 8.3M).
+    // Layers 2+3 fused, activation applied inline while reading the buffer.
+    // int32-safe: crelu ≤64×127×1024 ≈ 8.3M; screlu ≤64×124×400² ≈ 1.27e9.
     l2.fill(0); // scratch is reused across evals — must be re-zeroed
     for (let i = 0; i < h1; i++) {
       let a = buf[off0 + i];
       if (a <= 0) continue; // negative clamps to 0 → no contribution
-      if (a > QA) a = QA;
+      if (a > qa) a = qa;
+      if (screlu) a = a * a; // ≤ 160_000, exact i32
       const w2base = i * h2;
       for (let j = 0; j < h2; j++) l2[j] += w2[w2base + j] * a;
     }
     for (let i = 0; i < h1; i++) {
       let a = buf[off1 + i];
       if (a <= 0) continue;
-      if (a > QA) a = QA;
+      if (a > qa) a = qa;
+      if (screlu) a = a * a;
       const w2base = (h1 + i) * h2;
       for (let j = 0; j < h2; j++) l2[j] += w2[w2base + j] * a;
     }
     yRaw = 0;
-    for (let j = 0; j < h2; j++) {
-      const a = l2[j] >> 6; // /QB
-      const clamped = a < 0 ? 0 : a > QA ? QA : a;
-      yRaw += w3[j] * clamped;
+    if (screlu) {
+      // act² up to QA² means l2 lives on the QB×QA scale: divide (trunc —
+      // negatives clamp to 0 either way), not shift.
+      const den = QB * qa;
+      for (let j = 0; j < h2; j++) {
+        let a = (l2[j] / den) | 0;
+        if (a < 0) a = 0;
+        else if (a > qa) a = qa;
+        yRaw += w3[j] * a;
+      }
+    } else {
+      for (let j = 0; j < h2; j++) {
+        const a = l2[j] >> 6; // /QB
+        const clamped = a < 0 ? 0 : a > qa ? qa : a;
+        yRaw += w3[j] * clamped;
+      }
     }
   }
 
-  // cp (stm POV): y × SCALE / (QB × QA); yRaw×400 ≤ 1.7e9 < 2^31 ✓
-  const cpStm = Math.round((yRaw * SCALE) / (QB * QA));
+  // cp (stm POV): y × SCALE / (QB × QA); crelu ≤1.7e9, screlu ≤6.5e8 < 2^31 ✓
+  const cpStm = Math.round((yRaw * SCALE) / (QB * qa));
   return white ? cpStm : -cpStm;
 }

@@ -56,11 +56,12 @@ function recordGames(seed: number, games: number, plies: number): number[][] {
 
 // --- Old full-recompute reference (pre-incremental implementation) ------------
 const IN = 768;
-const QA = 1024;
 const QB = 64;
 const SCALE = 400;
 const net = nnueNet()!;
 const { h1, h2, w1, b1, w2, w3 } = net;
+const QA = net.qa; // scheme-locked to the magic (crelu 1024 / screlu 400)
+const SCRELU = net.act === 'screlu';
 const featA = new Int32Array(32);
 const featB = new Int32Array(32);
 const acc = new Int32Array(h1);
@@ -90,7 +91,7 @@ function evalOldFull(pos: Position): number {
     }
     for (let i = 0; i < h1; i++) {
       const a = acc[i] < 0 ? 0 : acc[i] > QA ? QA : acc[i];
-      act[v * h1 + i] = a;
+      act[v * h1 + i] = SCRELU ? a * a : a;
     }
   }
   l2ref.fill(0);
@@ -102,7 +103,7 @@ function evalOldFull(pos: Position): number {
   }
   let yRaw = 0;
   for (let j = 0; j < h2; j++) {
-    const a = l2ref[j] >> 6;
+    const a = SCRELU ? Math.trunc(l2ref[j] / (QB * QA)) : l2ref[j] >> 6;
     const clamped = a < 0 ? 0 : a > QA ? QA : a;
     yRaw += w3[j] * clamped;
   }
