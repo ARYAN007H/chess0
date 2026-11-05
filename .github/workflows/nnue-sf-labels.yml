@@ -1,0 +1,119 @@
+name: NNUE SF Teacher Labels
+
+# Relabels a self-play NDD1 corpus with Stockfish teacher scores, sharded
+# across GH runners. Why not Kaggle: its CPU containers kill SF processes
+# mid-search — deterministic per-position crashes under sustained NNUE load,
+# ~0.3-0.5% of positions, unreproducible locally (2026-11-05 investigation,
+# agentchat ~05:55 UTC). GH runners run the tune chains at full CPU for
+# hours without interference.
+
+on:
+  workflow_dispatch:
+    inputs:
+      run-id:
+        description: 'GH run id of the NDD1 artifact (nnue-data-v1-<run-id>)'
+        required: true
+        type: string
+      depth:
+        description: 'SF search depth'
+        required: false
+        default: '12'
+        type: string
+      workers:
+        description: 'SF processes per runner'
+        required: false
+        default: '3'
+        type: string
+
+jobs:
+  label:
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [0, 1, 2, 3, 4, 5, 6, 7]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download NDD1 corpus artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: nnue-data-v1-${{ inputs.run-id }}
+          run-id: ${{ inputs.run-id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          path: corpus/
+
+      - name: Install Stockfish (17.1 avx2, apt fallback)
+        run: |
+          curl -sL -o /tmp/sf.tar https://github.com/official-stockfish/Stockfish/releases/download/sf_17.1/stockfish-ubuntu-x86-64-avx2.tar
+          mkdir -p /tmp/sfx && tar xf /tmp/sf.tar -C /tmp/sfx
+          SF=$(find /tmp/sfx -name 'stockfish*' -type f -perm -u+x | head -1)
+          printf 'uci\nisready\nposition startpos\ngo depth 8 movetime 3000\nquit\n' | "$SF" > /tmp/sf-probe.txt 2>&1 || true
+          if grep -q bestmove /tmp/sf-probe.txt; then
+            echo "SF=$SF" >> "$GITHUB_ENV"
+          else
+            sudo apt-get update -qq && sudo apt-get install -y stockfish
+            echo "SF=$(which stockfish)" >> "$GITHUB_ENV"
+          fi
+
+      - name: Convert corpus to FEN list
+        run: python training/nnue_to_fen.py --in corpus/nnue-data-v1.bin --out fens.txt
+
+      - name: Label shard ${{ matrix.shard }}
+        run: |
+          python training/sf_label.py \
+            --in corpus/nnue-data-v1.bin \
+            --fens fens.txt \
+            --out labels \
+            --sf "$SF" \
+            --workers ${{ inputs.workers }} \
+            --depth ${{ inputs.depth }} \
+            --every 25000 \
+            --movetime 60 \
+            --shard ${{ matrix.shard }} \
+            --shards 8
+
+      - name: Upload shard labels
+        uses: actions/upload-artifact@v4
+        with:
+          name: sf-part-${{ matrix.shard }}
+          path: labels.part*
+          if-no-files-found: error
+
+  merge:
+    needs: label
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download NDD1 corpus artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: nnue-data-v1-${{ inputs.run-id }}
+          run-id: ${{ inputs.run-id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          path: corpus/
+
+      - name: Download all shard labels
+        uses: actions/download-artifact@v4
+        with:
+          pattern: sf-part-*
+          merge-multiple: true
+          path: parts/
+
+      - name: Merge into final labeled NDD1
+        run: |
+          cp parts/*.part* . 2>/dev/null || true
+          python training/sf_label.py \
+            --in corpus/nnue-data-v1.bin \
+            --fens unused.txt \
+            --out nnue-data-sf12.bin \
+            --merge-only
+
+      - name: Upload merged labels
+        uses: actions/upload-artifact@v4
+        with:
+          name: nnue-sf12-labels
+          path: nnue-data-sf12.bin
