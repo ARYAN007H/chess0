@@ -23,11 +23,17 @@ FEATURES (must mirror src/engine/nnue.ts exactly):
     featureB = (type + (6 if ownA else 0)) * 64 + (sqA ^ 56)
 
 QUANTIZATION (must mirror src/engine/nnue.ts exactly):
-  L1: w1q = round(clip(w, ±0.95) * QA), QA=1024, int16  (accumulator-safe)
+  L1: w1q = round(clip(w, ±0.95) * QA), int16  (accumulator-safe)
   L2: w2q = round(clip(w, ±1.95) * QB), QB=64,   int8
   L3: w3q = round(clip(w, ±1.95) * QB),          int8
-  forward (integer): act=clamp(acc,0,QA); l2act=clamp(l2>>6,0,QA);
+  forward (integer, crelu): act=clamp(acc,0,QA); l2act=clamp(l2>>6,0,QA);
+  forward (integer, screlu): act=clamp(acc,0,QA)**2;
+                             l2act=clamp(l2//(QB*QA),0,QA);
   cp = round(y_raw * SCALE / (QB*QA)), SCALE=400  (y in "w3 units" ≈ cp/400)
+  Two schemes, flagged by the file magic:
+    C0NNUE01 = v1 crelu,    QA=1024
+    C0NNUE02 = v2 screlu,   QA=400  (act^2 ≤ QA^2; l2 sums stay in i32:
+                              64 * 124 * 400^2 ≈ 1.27e9 < 2^31)
   Weight file w1 is written FEATURE-MAJOR [view][feature][row] — the TS
   inference loop is contiguous per feature; L2 is written in-major [in][out].
 
@@ -46,9 +52,21 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 IN = 768
-QA = 1024
 QB = 64
 SCALE = 400
+ACT = "crelu"  # "crelu" (v1, QA=1024) | "screlu" (v2, QA=400) — set by main()
+QA = 1024
+
+MAGIC = {"crelu": b"C0NNUE01", "screlu": b"C0NNUE02"}
+QA_BY_ACT = {"crelu": 1024, "screlu": 400}
+
+
+def set_activation(act: str):
+    """Select the quant scheme before training/quantizing (script = one run
+    per process, so module globals are the honest way to carry this)."""
+    global ACT, QA
+    ACT = act
+    QA = QA_BY_ACT[act]
 
 
 # ---------------------------------------------------------------- data ----
@@ -607,9 +625,9 @@ def _load_parquet_sequential(files, max_positions: int, min_depth: int, scratch_
 # ---------------------------------------------------------------- model ----
 
 class SmallNNUE(nn.Module):
-    def __init__(self, h1: int = 32, h2: int = 32):
+    def __init__(self, h1: int = 32, h2: int = 32, act: str = "crelu"):
         super().__init__()
-        self.h1, self.h2 = h1, h2
+        self.h1, self.h2, self.act = h1, h2, act
         self.w1 = nn.Parameter(torch.zeros(2, h1, IN))
         self.b1 = nn.Parameter(torch.zeros(2, h1))
         self.w2 = nn.Parameter(torch.zeros(2 * h1, h2))
@@ -628,6 +646,11 @@ class SmallNNUE(nn.Module):
         accB = (self.w1[1].T[idxB] * m3).sum(dim=1) + self.b1[1]
         actA = accA.clamp(0.0, 1.0)
         actB = accB.clamp(0.0, 1.0)
+        if self.act == "screlu":
+            # squared clamp on L1 only — L2 keeps plain crelu so the A/B vs
+            # v1 isolates the activation change (no b2/b3 either)
+            actA = actA * actA
+            actB = actB * actB
         h = torch.cat([actA, actB], dim=1)                            # (B, 2*h1)
         l2 = (h @ self.w2).clamp(0.0, 1.0)
         return (l2 @ self.w3).squeeze(-1)                             # (B,) in "w3 units"
@@ -653,15 +676,19 @@ def main():
     ap.add_argument("--workers", type=int, default=0, help="parallel parquet decode workers (0 = auto, 1 = sequential)")
     ap.add_argument("--scratch-dir", default="", help="directory for decode scratch files (default: system temp)")
     ap.add_argument("--clip-grad", type=float, default=1.0, help="gradient L2 norm clip (0 = off)")
+    ap.add_argument("--activation", choices=("crelu", "screlu"), default="crelu",
+                    help="L1 activation: crelu=clamp(v,0,1) [v1, magic C0NNUE01, QA=1024]; "
+                         "screlu=clamp(v,0,1)^2 [v2, magic C0NNUE02, QA=400]")
     ap.add_argument("--resume", default="",
                     help="float .pt state_dict to fine-tune from (default: random init)")
     args = ap.parse_args()
 
     if args.workers < 0 or args.max_positions < 0 or args.min_depth < 1 or args.epochs < 0 or args.batch < 1:
         raise SystemExit("invalid arguments: workers/max-positions/epochs must be >= 0, min-depth >= 1, batch >= 1")
+    set_activation(args.activation)
     torch.manual_seed(args.seed)
     device = "cuda" if torch.cuda.is_available() else "cpu"
-    print(f"device: {device}  net: 768x{args.h1}x2 -> {args.h2} -> 1")
+    print(f"device: {device}  net: 768x{args.h1}x2 -> {args.h2} -> 1  act: {ACT} (QA={QA}, magic {MAGIC[ACT].decode()})")
 
     if "*" in args.data or os.path.isdir(args.data):
         # globs/directories are parquet-only; a non-parquet glob fails inside
@@ -698,10 +725,12 @@ def main():
     y = torch.from_numpy(labels / SCALE).to(dev)          # network trains in w3 units (cp/400)
     msk = torch.from_numpy(mask)      # uint8 (N, 32) on CPU
 
-    model = SmallNNUE(h1=args.h1, h2=args.h2).to(dev)
+    model = SmallNNUE(h1=args.h1, h2=args.h2, act=ACT).to(dev)
     if args.resume:
         model.load_state_dict(torch.load(args.resume, map_location=dev))
-        print(f"resumed weights from {args.resume} (fine-tune: use a low --lr)")
+        # the .pt is a plain state_dict (pre-v2 checkpoints too), so it cannot
+        # record the activation — the caller must pass the matching --activation
+        print(f"resumed weights from {args.resume} (act={ACT}; fine-tune: use a low --lr)")
     opt = torch.optim.AdamW(
         [{"params": [model.w1, model.w2, model.w3], "weight_decay": args.weight_decay},
          {"params": [model.b1], "weight_decay": 0.0}],
@@ -801,8 +830,8 @@ def main():
 
 def quantize_and_save(model: SmallNNUE, out: str):
     """Quantize to the TS layout, write atomically, and return the quantized
-    arrays (w1 feature-major, b1, w2 in-major, w3) for the integer reference
-    forward in print_reference_evals."""
+    arrays (w1 feature-major, b1, w2 in-major, w3) plus (act, qa) so the
+    integer reference forward in print_reference_evals mirrors this net."""
     w1 = model.w1.detach().cpu().numpy().clip(-0.95, 0.95)
     b1 = model.b1.detach().cpu().numpy().clip(-0.95, 0.95)
     w2 = model.w2.detach().cpu().numpy().clip(-1.95, 1.95)
@@ -821,7 +850,7 @@ def quantize_and_save(model: SmallNNUE, out: str):
     w1_fm = np.transpose(w1q, (0, 2, 1))  # (2, IN, h1)
 
     blob = bytearray()
-    blob += b"C0NNUE01"
+    blob += MAGIC[ACT]
     blob += int(IN).to_bytes(4, "little")
     blob += int(h1).to_bytes(4, "little")
     blob += int(h2).to_bytes(4, "little")
@@ -839,25 +868,32 @@ def quantize_and_save(model: SmallNNUE, out: str):
     with open(tmp, "wb") as f:
         f.write(blob)
     os.replace(tmp, out)  # atomic: a killed run can't leave a half-written net
-    print(f"quantized net -> {out} ({len(blob) / 1024:.0f}KB)")
-    return w1_fm, b1q, w2q, w3q
+    print(f"quantized net -> {out} ({len(blob) / 1024:.0f}KB, magic {MAGIC[ACT].decode()}, QA={QA})")
+    return w1_fm, b1q, w2q, w3q, ACT, QA
 
 
 def nnue_forward_int(q, codes, stm):
     """Exact integer mirror of src/engine/nnue.ts evalNnueWhitePov for one
     position: white-POV cp from the quantized weights. Every op mirrors the
-    TS (b1-seeded accumulators, clamp [0,QA], l2>>6, Math.round semantics)."""
-    w1_fm, b1q, w2q, w3q = q
+    TS (b1-seeded accumulators, clamp [0,QA], crelu l2>>6 / screlu l2//(QB*QA),
+    Math.round semantics)."""
+    w1_fm, b1q, w2q, w3q, act, qa = q
     h1 = b1q.shape[1]
     featA, featB, maskA = _features_from_codes(codes, stm)
-    act = np.empty(2 * h1, np.int64)
+    actv = np.empty(2 * h1, np.int64)
     for v, feats in ((0, featA), (1, featB)):
         acc = w1_fm[v][feats[maskA.astype(bool)]].sum(axis=0) + b1q[v]
-        act[v * h1:(v + 1) * h1] = np.clip(acc, 0, QA)
-    l2 = (w2q.astype(np.int64) * act[:, None]).sum(axis=0)
-    l2act = np.clip(l2 >> 6, 0, QA)  # arithmetic shift, matches TS >>
+        a = np.clip(acc, 0, qa)
+        actv[v * h1:(v + 1) * h1] = a * a if act == "screlu" else a
+    l2 = (w2q.astype(np.int64) * actv[:, None]).sum(axis=0)
+    if act == "screlu":
+        # floor division: sign-safe vs wasm/TS truncation because any negative
+        # l2 (or l2 < QB*QA) clamps to 0 either way
+        l2act = np.clip(l2 // (QB * qa), 0, qa)
+    else:
+        l2act = np.clip(l2 >> 6, 0, qa)  # arithmetic shift, matches TS >>
     y = int((w3q.astype(np.int64) * l2act).sum())
-    cp = int(np.floor(y * SCALE / (QB * QA) + 0.5))  # Math.round semantics
+    cp = int(np.floor(y * SCALE / (QB * qa) + 0.5))  # Math.round semantics
     return -cp if stm == 1 else cp
 
 
@@ -865,15 +901,16 @@ def load_quantized_bin(path):
     """Parse the written weight file back (round-trip) — a layout/offset bug
     in the serializer cannot pass the reference evals unnoticed."""
     raw = open(path, "rb").read()
-    if raw[:8] != b"C0NNUE01":
+    if raw[:8] not in (b"C0NNUE01", b"C0NNUE02"):
         raise ValueError(f"{path}: bad magic")
+    act = "screlu" if raw[:8] == b"C0NNUE02" else "crelu"
     h1 = int.from_bytes(raw[12:16], "little")
     h2 = int.from_bytes(raw[16:20], "little")
     qa = int.from_bytes(raw[20:22], "little", signed=True)
     qb = int.from_bytes(raw[22:24], "little", signed=True)
     scale = int.from_bytes(raw[24:26], "little", signed=True)
-    if (qa, qb, scale) != (QA, QB, SCALE) or not (1 <= h1 <= 8192 and 1 <= h2 <= 8192):
-        raise ValueError(f"{path}: bad header h1={h1} h2={h2} qa={qa} qb={qb} scale={scale}")
+    if (act, qa, qb, scale) != (ACT, QA, QB, SCALE) or not (1 <= h1 <= 8192 and 1 <= h2 <= 8192):
+        raise ValueError(f"{path}: bad header act={act} h1={h1} h2={h2} qa={qa} qb={qb} scale={scale}")
     expected = 26 + 2 * IN * h1 * 2 + 2 * h1 * 2 + 2 * h1 * h2 + h2
     if len(raw) != expected:
         raise ValueError(f"{path}: size {len(raw)} != expected {expected} for h1={h1} h2={h2}")
@@ -885,7 +922,7 @@ def load_quantized_bin(path):
     w2q = np.frombuffer(raw, "i1", 2 * h1 * h2, off).reshape(2 * h1, h2)
     off += 2 * h1 * h2
     w3q = np.frombuffer(raw, "i1", h2, off)
-    return w1_fm, b1q, w2q, w3q
+    return w1_fm, b1q, w2q, w3q, act, qa
 
 
 def print_reference_evals(path):
