@@ -6,6 +6,8 @@
 
 import { Engine } from './engine';
 import type { SearchLimits } from './search';
+import { evalNnueWhitePov, loadNnueWeights } from './nnue';
+import { setEvalOverride, clearEvalCaches } from './evalV3';
 
 const engine = new Engine();
 const ctx = self as unknown as Worker;
@@ -80,6 +82,28 @@ ctx.onmessage = (e: MessageEvent<WorkerRequest>) => {
     ctx.postMessage({ type: 'error', message: err instanceof Error ? err.message : String(err) });
   }
 };
+
+// Site NNUE: fetch the champion net and route leaf evaluations through it.
+// The search itself is untouched — setEvalOverride makes any v3-variant
+// search consult the net. On any failure the hand eval continues unchanged.
+async function enableSiteNnue(): Promise<void> {
+  try {
+    const res = await fetch(`${import.meta.env.BASE_URL}nnue-v1.bin`, {
+      signal: AbortSignal.timeout(8000), // never let a hung fetch stall evals
+    });
+    if (!res.ok) throw new Error(`http ${res.status}`);
+    const bytes = new Uint8Array(await res.arrayBuffer());
+    loadNnueWeights(bytes);
+    setEvalOverride(evalNnueWhitePov);
+    clearEvalCaches();
+    ctx.postMessage({ type: 'nnue', active: true });
+  } catch (err) {
+    console.warn('NNUE unavailable, using hand eval:', err instanceof Error ? err.message : err);
+    ctx.postMessage({ type: 'nnue', active: false });
+  }
+}
+
+void enableSiteNnue();
 
 ctx.postMessage({ type: 'ready', fen: engine.fen() });
 

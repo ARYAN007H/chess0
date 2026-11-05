@@ -46,17 +46,29 @@ export class EngineClient {
   private pending = new Map<number, { resolve: (r: EngineBestMove) => void; onInfo?: InfoHandler }>();
   private readyPromise: Promise<void>;
   private readyResolve!: () => void;
+  /** Resolves true when the worker's NNUE net is active (false = hand eval). */
+  readonly nnuePromise: Promise<boolean>;
+  private nnueResolve!: (active: boolean) => void;
 
   constructor() {
     this.worker = new Worker(new URL('./engine/worker.ts', import.meta.url), { type: 'module' });
     this.readyPromise = new Promise((resolve) => {
       this.readyResolve = resolve;
     });
+    this.nnuePromise = new Promise((resolve) => {
+      this.nnueResolve = resolve;
+    });
     this.worker.onmessage = (e: MessageEvent) => {
       const msg = e.data;
       switch (msg.type) {
         case 'ready':
           this.readyResolve();
+          break;
+        case 'nnue':
+          this.nnueResolve(Boolean(msg.active));
+          // Test/observability hook: the worker realm is unreachable from the page.
+          (window as unknown as { __chess0Nnue?: boolean }).__chess0Nnue = Boolean(msg.active);
+          console.info(`[chess0] NNUE ${msg.active ? 'active' : 'unavailable — hand eval'}`);
           break;
         case 'moved':
         case 'error':
