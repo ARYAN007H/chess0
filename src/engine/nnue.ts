@@ -36,6 +36,7 @@
 
 import type { Position } from './position';
 import { MAX_HIST, WHITE } from './types';
+import { nnueWasmActive, nnueWasmEvalL23, nnueWasmInit, nnueWasmLoadNet } from './nnueWasm';
 
 const IN = 768;
 const QA = 1024;
@@ -99,6 +100,11 @@ export function loadNnueWeights(bytes: Uint8Array): string {
   net = { h1, h2, w1, b1, w2, w3 };
   l2 = new Int32Array(h2);
   loadStamp++;
+  // WASM SIMD path (layer 2/3): init + write transposed weights. Returns
+  // false on unsupported environments or oversized dims — the JS loop below
+  // stays the fallback. Bit-exact either way (enforced by tests).
+  nnueWasmInit();
+  nnueWasmLoadNet(h1, h2, w2, w3);
   return `nnue: loaded net (768×${h1}×2→${h2}→1, ${(bytes.length / 1024).toFixed(0)}KB)`;
 }
 
@@ -282,28 +288,35 @@ export function evalNnueWhitePov(pos: Position): number {
   const off0 = white ? base : base + h1;
   const off1 = white ? base + 3 * h1 : base + 2 * h1;
 
-  // Layers 2+3 fused, ClippedReLU applied inline while reading the buffer
-  // (int32-safe: ≤64×127×1024 ≈ 8.3M).
-  l2.fill(0); // scratch is reused across evals — must be re-zeroed
-  for (let i = 0; i < h1; i++) {
-    let a = buf[off0 + i];
-    if (a <= 0) continue; // negative clamps to 0 → no contribution
-    if (a > QA) a = QA;
-    const w2base = i * h2;
-    for (let j = 0; j < h2; j++) l2[j] += w2[w2base + j] * a;
-  }
-  for (let i = 0; i < h1; i++) {
-    let a = buf[off1 + i];
-    if (a <= 0) continue;
-    if (a > QA) a = QA;
-    const w2base = (h1 + i) * h2;
-    for (let j = 0; j < h2; j++) l2[j] += w2[w2base + j] * a;
-  }
-  let yRaw = 0;
-  for (let j = 0; j < h2; j++) {
-    const a = l2[j] >> 6; // /QB
-    const clamped = a < 0 ? 0 : a > QA ? QA : a;
-    yRaw += w3[j] * clamped;
+  let yRaw: number;
+  if (nnueWasmActive()) {
+    // WASM SIMD path — bit-exact with the JS loop below (enforced by the
+    // nnue test suite, which exercises whichever path is active).
+    yRaw = nnueWasmEvalL23(buf, off0, off1, h1);
+  } else {
+    // Layers 2+3 fused, ClippedReLU applied inline while reading the buffer
+    // (int32-safe: ≤64×127×1024 ≈ 8.3M).
+    l2.fill(0); // scratch is reused across evals — must be re-zeroed
+    for (let i = 0; i < h1; i++) {
+      let a = buf[off0 + i];
+      if (a <= 0) continue; // negative clamps to 0 → no contribution
+      if (a > QA) a = QA;
+      const w2base = i * h2;
+      for (let j = 0; j < h2; j++) l2[j] += w2[w2base + j] * a;
+    }
+    for (let i = 0; i < h1; i++) {
+      let a = buf[off1 + i];
+      if (a <= 0) continue;
+      if (a > QA) a = QA;
+      const w2base = (h1 + i) * h2;
+      for (let j = 0; j < h2; j++) l2[j] += w2[w2base + j] * a;
+    }
+    yRaw = 0;
+    for (let j = 0; j < h2; j++) {
+      const a = l2[j] >> 6; // /QB
+      const clamped = a < 0 ? 0 : a > QA ? QA : a;
+      yRaw += w3[j] * clamped;
+    }
   }
 
   // cp (stm POV): y × SCALE / (QB × QA); yRaw×400 ≤ 1.7e9 < 2^31 ✓

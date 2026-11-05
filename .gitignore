@@ -11,3 +11,6 @@ data/artifacts/
 data/tuned-params-v2.json
 .zcode/
 __pycache__/
+
+# rust/wasm build artifacts
+wasm/**/target/
