@@ -24,6 +24,7 @@ works here as "agent-1"; read its rules before touching the shared tree),
 | 100M prefix | first 100M | **−89 ±79** | saturation vs 50M within noise |
 | distilled R1 | 100M net + 1.26M depth-6 self-play labels (lr 1e-4 × 2ep) | **−127 ±81** | WEAK TEACHER regression |
 | **100M + incremental acc** | same 100M data, 2.8× faster eval (PR #1) | **+22 ±76 PASS** | FIRST POSITIVE GATE — the speed work is worth ~+111 vs the −89 pre-acc benchmark (80 games, 38W 9D 33L) |
+| **100M+acc + SF-teacher** | fine-tuned on 868,742 SF-17 depth-12 labels (GH Actions pipeline, PR #5) | **+48 ±76 PASS** | NEW CHAMPION — teacher-quality axis delivered ~+26 over +22. Round 3 skipped the weak depth-8 teacher entirely; labels from `nnue-sf-labels.yml` run 42060471468 |
 | uniform-20m + acc | uniform 20M sample, 32-wide | **−89 ±79 REJECT** | composition helped vs 20M-prefix (−158) but volume wins: 100M-prefix+acc = +22, gap ~+111. 100M-uniform pretrain DEMOTED below SF-teacher / arch v2 |
 | 64-wide 100M + acc | same 100M data, 2× width | **−44 ±77 REJECT** | width tax confirmed: 1805k nodes/game vs the 32w's 3922k (9.7µs vs 4.15µs walk). Capacity axis CLOSED at current eval speed — revisit only AFTER WASM; arch v2 (SCReLU) should stay 32-wide-first |
 
