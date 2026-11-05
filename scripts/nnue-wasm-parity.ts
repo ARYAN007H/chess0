@@ -7,6 +7,12 @@ import { nnueWasmActive } from '../src/engine/nnueWasm';
 console.log('wasm active:', nnueWasmActive());
 loadNnueWeights(new Uint8Array(readFileSync('data/nnue-v1.bin')));
 console.log('wasm active after load:', nnueWasmActive());
+// The cross-check is only meaningful when the kernel actually ran — a silent
+// JS fallback would trivially pass against itself.
+if (!nnueWasmActive()) {
+  console.error('FATAL: WASM kernel not active — refusing to validate the fallback against itself');
+  process.exit(1);
+}
 
 // Pure-JS reference (the pre-wasm implementation, verbatim)
 const IN = 768, QA = 1024, QB = 64, SCALE = 400;
