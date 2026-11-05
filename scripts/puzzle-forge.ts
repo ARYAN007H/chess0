@@ -521,7 +521,7 @@ function textRepeatWarnings(puzzles: ChessPuzzle[]): string[] {
 // --- batch emission ----------------------------------------------------------
 
 function q(s: string): string {
-  return `'${s.replace(/\\/g, '\\\\').replace(/'/g, "\\'")}'`;
+  return `'${s.replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/\n/g, '\\n')}'`;
 }
 
 function emitBatch(puzzles: ChessPuzzle[], varName: string, header: string): string {

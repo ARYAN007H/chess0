@@ -143,7 +143,7 @@ export function PuzzleTrainer({
                   {activePuzzle.sideToSolve} to Move
                 </div>
                 <div className="text-2xs font-medium text-ink-3">
-                  Puzzle #{activePuzzle.id.replace('puz-', '')} · Rated {activePuzzle.rating} Elo
+                  Puzzle #{activePuzzle.id} · Rated {activePuzzle.rating} Elo
                 </div>
               </div>
             </div>
@@ -366,7 +366,7 @@ export function PuzzleTrainer({
               type="search"
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              placeholder={`Search ${PUZZLE_LIBRARY.length} puzzles by #number or motif…`}
+              placeholder={`Search ${PUZZLE_LIBRARY.length} puzzles by id or motif…`}
               className="field min-w-0 flex-1"
             />
             <button

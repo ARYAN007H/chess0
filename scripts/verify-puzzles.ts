@@ -530,6 +530,36 @@ async function loadPuzzles(arg: string): Promise<ChessPuzzle[]> {
   throw new Error(`unknown mode "${arg}" (use: all | file <path>)`);
 }
 
+/** Seed cross-puzzle maps from every batch file EXCEPT the one under review,
+ *  so `file` mode catches duplicates against the rest of the catalog. */
+async function seedFromOtherBatches(skipPath: string, seenFens: Map<string, string>, seenKeys: Map<string, string>): Promise<void> {
+  const { readdirSync } = await import('node:fs');
+  const { dirname, join, resolve } = await import('node:path');
+  const batchDir = resolve(dirname(skipPath));
+  let files: string[] = [];
+  try {
+    files = readdirSync(batchDir).filter((f) => /^batch-\d+\.ts$/.test(f)).sort();
+  } catch {
+    return; // not a batch dir — nothing to seed
+  }
+  const skipAbs = resolve(skipPath);
+  for (const f of files) {
+    const abs = join(batchDir, f);
+    if (abs === skipAbs) continue;
+    try {
+      const mod = await import(pathToFileURL(abs).href);
+      const arr = (mod.default ?? Object.values(mod).find((v) => Array.isArray(v))) as ChessPuzzle[];
+      if (!Array.isArray(arr)) continue;
+      for (const p of arr) {
+        try {
+          seenFens.set(canonicalFen(p.initialFen), p.id);
+        } catch { /* unparseable FEN in a sibling — the verifier will flag it when reached */ }
+        seenKeys.set(`${p.theme}|${p.solutionUci[0] ?? ''}`, p.id);
+      }
+    } catch { /* sibling fails to import — leave it to all-mode */ }
+  }
+}
+
 async function main() {
   const arg = process.argv[2] ?? 'all';
   const puzzles = await loadPuzzles(arg);
@@ -537,6 +567,9 @@ async function main() {
 
   const seenFens = new Map<string, string>();
   const seenKeys = new Map<string, string>();
+  if (arg === 'file' && process.argv[3]) {
+    await seedFromOtherBatches(process.argv[3], seenFens, seenKeys);
+  }
   const failures: Failure[] = [];
   const t0 = Date.now();
 

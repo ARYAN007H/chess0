@@ -171,7 +171,7 @@ const batch03: ChessPuzzle[] = [
     solutionUci: ['h3f2'],
     goal: 'mate',
     hint: 'The h3 knight jumps into the corner cage.',
-    explanation: 'Nf2# — check on h1 with every escape covered by White\'s own Rg1, g2 and h2.',
+    explanation: 'Nf2# — the rim knight lands next to the h1 king, whose own rook and pawns take every flight square away.',
   },
   {
     id: 'b03-15',
@@ -350,7 +350,7 @@ const batch03: ChessPuzzle[] = [
     initialFen: 'r6k/4R3/pp3N1p/8/8/8/5PPP/6K1 w - - 0 1',
     solutionUci: ['e7h7'],
     goal: 'mate',
-    hint: 'The seventh rank leads straight to the corner.',
+    hint: 'From e7 the rook already eyes the mating square — one step right.',
     explanation: 'Rh7# — the knight covers g8 and protects the landing square; the Arabian pattern completes.',
   },
   {
@@ -403,7 +403,7 @@ const batch03: ChessPuzzle[] = [
   },
   {
     id: 'b03-34',
-    title: 'Rook from c2',
+    title: 'Rook sweeps from c2',
     theme: 'Arabian Mate',
     rating: 1230,
     sideToSolve: 'white',
@@ -523,7 +523,7 @@ const batch03: ChessPuzzle[] = [
   },
   {
     id: 'b03-44',
-    title: 'Rook from c2',
+    title: 'Rook descends from c2',
     theme: 'Arabian Mate',
     rating: 1230,
     sideToSolve: 'black',

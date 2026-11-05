@@ -272,11 +272,11 @@ export const batch02: ChessPuzzle[] = [
     explanation: 'Rd1# — the rook mates on the first rank; White’s pawns complete the cage.',
   },
   {
-    id: 'b02-39', title: 'Rook Descends from c8', theme: 'Mating Net', rating: 850,
-    sideToSolve: 'black', initialFen: '2r3k1/5ppp/8/8/8/8/5PPP/6K1 b - - 0 1',
-    goal: 'mate', solutionUci: ['c8c1'],
-    hint: 'The c-file rook has a clear road to c1.',
-    explanation: 'Rc1# — the rook mates on the first rank; the white king is sealed by its own pawns.',
+    id: 'b02-39', title: 'Anastasia from d4', theme: 'Mating Net', rating: 850,
+    sideToSolve: 'white', initialFen: '8/pp2N2k/6p1/8/3R4/2B5/5PPP/5K2 w - - 0 1',
+    goal: 'mate', solutionUci: ['d4h4'],
+    hint: 'The knight covers g8 and g6, the bishop covers g7 — slide the rook to the h-file.',
+    explanation: 'Rh4# — Anastasia’s mate delivered from the d4 rook; every kingside flight is sealed.',
   },
   {
     id: 'b02-40', title: 'Rook Descends from e7', theme: 'Mating Net', rating: 950,

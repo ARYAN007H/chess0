@@ -1,8 +1,11 @@
 /**
  * Puzzle catalog — 500 handcrafted tactical puzzles, engine-verified.
  *
- * Every puzzle in `src/engine/puzzleData/` is an individually composed
- * position (no symmetry/stamp transforms) with a forced, unique solution.
+ * Every puzzle in `src/engine/puzzleData/` is handcrafted with a forced,
+ * unique solution, proven by scripts/verify-puzzles.ts. Positions are
+ * individually composed; within some theme families several puzzles share a
+ * structural skeleton and differ in the attacking route (flagged for
+ * diversification as later batches land).
  * The strict verifier (`scripts/verify-puzzles.ts`) proves, using this repo's
  * own engine:
  *   - the FEN is fully legal,
@@ -113,10 +116,10 @@ const BATCHES: ChessPuzzle[][] = [
 
 function buildCatalog(): ChessPuzzle[] {
   const all = BATCHES.flat();
-  // Learning curve: easy → hard. IDs are assigned after sorting so puzzle
-  // numbers match difficulty order.
-  const sorted = [...all].sort((a, b) => a.rating - b.rating);
-  return sorted.map((p, i) => ({ ...p, id: `puz-${String(i + 1).padStart(3, '0')}` }));
+  // Learning curve: easy → hard. IDs stay the stable per-batch ids
+  // (b01-01 … b10-50) so persisted player progress survives future batches
+  // inserting into the rating order.
+  return [...all].sort((a, b) => a.rating - b.rating);
 }
 
 export const PUZZLE_LIBRARY: ChessPuzzle[] = buildCatalog();
