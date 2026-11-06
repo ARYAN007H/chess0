@@ -321,3 +321,20 @@ uniform data → #3/#4/#5 cheap wins → arch v2 → WASM on top of incremental.
   instruction path is crelu-only; screlu needs the i32 lane-math variant; (5) Kaggle runs
   two GPU kernels CONCURRENTLY on one quota (both confirmed RUNNING) — parallel pretrains
   are fine, quota burns per-session wall clock.
+
+- **§10c FINAL (2026-11-07 ~00:30 UTC) — V2 CHAMPION CROWNED**: gate 1 screlu32-sftuned
+  **+255 ±98** (64W-2D-14L); gate 2 screlu64-sftuned +112 ±80 (2× eval tax: 10.2µs vs 5.3µs —
+  width does NOT pay at fixed movetime until layer-1/accumulator gets SIMD'd); head-to-head
+  **+4 ±76 dead even → the faster net is champion**. Champion net swapped (public/nnue-v1.bin,
+  sha256 53a8f250) — site rides the next Pages build. Loss ladder: crelu-32w 0.014093 →
+  screlu-32w 0.013797 → screlu-64w-4ep 0.013122 (width wins on loss, not on play);
+  SF-12 fine-tune halves loss (0.006384). Strict review: 1×P1 (screlu l2 i32 wrap at h1≥54)
+  fixed with exact i64/float64 accumulation everywhere (2197d4a); real-weight proof: max |l2|
+  = 14% of i32. Bench gate v1-nps FAILS on this loaded machine (load avg 7) — control run on
+  the untouched shared tree fails identically (0.63M) → environmental, not regression.
+- **In flight**: imhumon/v2-nnue-screlu64-ext (8ep-64w — same node tax, unlikely to take the
+  crown, gated later for the record); decode-{0,1,2} CPU kernels building the 340M chunks
+  (~3.3h, zero GPU quota — traps hit: mkdtemp needs an existing dir (fixed in-trainer), and
+  raw.githubusercontent CDN served a STALE trainer to decode-0 (guard now greps for the fix
+  marker); re-pushed). Corpus run 42267729644 (8 shards × 4800 games) → SF-12 relabel next.
+  train-340m bundle ready (/tmp/kk/train-340m), gated on decodes + width decision (default 32w).
