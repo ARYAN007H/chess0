@@ -143,7 +143,7 @@ export function PuzzleTrainer({
                   {activePuzzle.sideToSolve} to Move
                 </div>
                 <div className="text-2xs font-medium text-ink-3">
-                  Puzzle #{activePuzzle.id.replace('puz-', '')} · Rated {activePuzzle.rating} Elo
+                  Puzzle #{activePuzzle.id} · Rated {activePuzzle.rating} Elo
                 </div>
               </div>
             </div>
@@ -339,7 +339,7 @@ export function PuzzleTrainer({
               onChange={(e) => setSelectedTheme(e.target.value as PuzzleTheme | 'all')}
               className="field"
             >
-              <option value="all">All 12 Themes ({PUZZLE_LIBRARY.length})</option>
+              <option value="all">All {ALL_PUZZLE_THEMES.length} Themes ({PUZZLE_LIBRARY.length})</option>
               {ALL_PUZZLE_THEMES.map((t) => (
                 <option key={t} value={t}>
                   {t}
@@ -366,7 +366,7 @@ export function PuzzleTrainer({
               type="search"
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              placeholder="Search 540 puzzles by #number or motif…"
+              placeholder={`Search ${PUZZLE_LIBRARY.length} puzzles by id or motif…`}
               className="field min-w-0 flex-1"
             />
             <button
