@@ -285,3 +285,56 @@ uniform data → #3/#4/#5 cheap wins → arch v2 → WASM on top of incremental.
   agentchat 2026-11-05 23:59); (2) self-consistent test suites never catch a systematically
   wrong kernel — always cross-check against an independent implementation; (3) workflow wall
   estimates: calibrate from a local shard smoke (my 3h estimate was 4× high).
+
+### §10c Session 4 (2026-11-06) — arch v2 SCReLU (branch feat/agent-zephyr-arch-v2-screlu)
+
+- **Trainer v2** (`training/nnue_train.py`, commit a525426): `--activation {crelu,screlu}`
+  (default crelu — proven BYTE-IDENTICAL to the pre-patch trainer via a same-seed tiny-data
+  run, cmp clean). Screlu = squared clamp on L1 ONLY (L2 stays crelu, no b2/b3 — isolates
+  the activation A/B), magic **C0NNUE02**, **QA=400** so l2 int sums stay i32-safe
+  (64 × 124 × 400² ≈ 1.27e9 < 2^31; at QA=1024 they'd overflow). Int mirror:
+  `l2act = clamp(l2 // (QB*QA), 0, QA)` = //25600 — floor vs trunc is sign-safe because
+  anything negative clamps to 0 either way. cp formula unchanged.
+- **Engine v2** (commit 3af8038): loader accepts both magics and scheme-locks QA to the
+  magic (crelu→1024, screlu→400, validated); JS eval branches per-net act/qa; wasm kernel
+  grew screlu paths (`set_dims(h1,h2,act,qa)`, 1619B) — act² breaks i16 lanes so screlu
+  squares into an i32 ACT2 buffer and multiplies per-lane in SIMD (exact, ~2× crelu's
+  inner cost, still far under the JS scalar path). **Fixed a latent stale-wasm bug**:
+  loadNnueWeights ignored nnueWasmLoadNet's result — a net the kernel can't hold (h1>256,
+  not %8) would have evaluated through the PREVIOUS net's weights; eval now gates on the
+  load result (`wasmLive`). 5 new synthetic-net tests (no net file, run in CI): v1/v2
+  oracle parity (wasm AND JS paths), scheme divergence, QA/magic lock, stale-wasm fallback.
+- **Verification state**: tsc clean; npm test green; wasm-vs-JS parity 2817 pos / 0
+  mismatch on the champion net; TS↔PY parity re-proven line-for-line on the champion
+  (52/-11/97/-43 both sides).
+- **GPU dispatch** (Aryan authorized the 15h quota): kernels `imhumon/v2-nnue-screlu32`
+  (100M × 8ep — direct A/B vs the +137 champion, everything else identical) and
+  `imhumon/v2-nnue-screlu64` (100M × 4ep — width probe, WASM re-opened 64w; 4ep is a probe,
+  muddy vs 8ep BY DESIGN) running in PARALLEL. Fine-tune kernels auto-dispatch by the
+  session's 30-min monitor automation (SF-12 labels, lr 2e-5, 1ep, --activation screlu).
+- **Gate plan**: pulled nets → header check → local PY/TS parity → `match.ts` gates vs the
+  +137 champion (swap data/nnue-v1.bin per the §4 runbook). Ship bar: ≥ +137 net strength
+  at equal or better node throughput. If 32w-screlu passes, width 64 / h2 64 / QAT become
+  the next rungs; if it fails on eval quality (not speed), check the QA=400 quantization
+  loss first (compare float checkpoint loss vs v1's).
+- **Traps added**: (4) i16 lanes can't hold act² (400² = 160_000 > 32767) — the wasm dot
+  instruction path is crelu-only; screlu needs the i32 lane-math variant; (5) Kaggle runs
+  two GPU kernels CONCURRENTLY on one quota (both confirmed RUNNING) — parallel pretrains
+  are fine, quota burns per-session wall clock.
+
+- **§10c FINAL (2026-11-07 ~00:30 UTC) — V2 CHAMPION CROWNED**: gate 1 screlu32-sftuned
+  **+255 ±98** (64W-2D-14L); gate 2 screlu64-sftuned +112 ±80 (2× eval tax: 10.2µs vs 5.3µs —
+  width does NOT pay at fixed movetime until layer-1/accumulator gets SIMD'd); head-to-head
+  **+4 ±76 dead even → the faster net is champion**. Champion net swapped (public/nnue-v1.bin,
+  sha256 53a8f250) — site rides the next Pages build. Loss ladder: crelu-32w 0.014093 →
+  screlu-32w 0.013797 → screlu-64w-4ep 0.013122 (width wins on loss, not on play);
+  SF-12 fine-tune halves loss (0.006384). Strict review: 1×P1 (screlu l2 i32 wrap at h1≥54)
+  fixed with exact i64/float64 accumulation everywhere (2197d4a); real-weight proof: max |l2|
+  = 14% of i32. Bench gate v1-nps FAILS on this loaded machine (load avg 7) — control run on
+  the untouched shared tree fails identically (0.63M) → environmental, not regression.
+- **In flight**: imhumon/v2-nnue-screlu64-ext (8ep-64w — same node tax, unlikely to take the
+  crown, gated later for the record); decode-{0,1,2} CPU kernels building the 340M chunks
+  (~3.3h, zero GPU quota — traps hit: mkdtemp needs an existing dir (fixed in-trainer), and
+  raw.githubusercontent CDN served a STALE trainer to decode-0 (guard now greps for the fix
+  marker); re-pushed). Corpus run 42267729644 (8 shards × 4800 games) → SF-12 relabel next.
+  train-340m bundle ready (/tmp/kk/train-340m), gated on decodes + width decision (default 32w).
