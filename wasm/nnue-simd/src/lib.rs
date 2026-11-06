@@ -49,7 +49,10 @@ static mut ACTS: A16<i16, { 2 * MAX_H1 }> = A16([0; 2 * MAX_H1]);
 static mut ACC: A16<i32, { 2 * MAX_H1 }> = A16([0; 2 * MAX_H1]);
 // screlu only: squared clamped activations, i32 lanes (act² ≤ 400² = 160_000).
 static mut ACT2: A16<i32, { 2 * MAX_H1 }> = A16([0; 2 * MAX_H1]);
-static mut L2OUT: [i32; MAX_H2] = [0; MAX_H2];
+// l2 can exceed i32 for screlu (2·h1·125·qa²: h1=256 → 2.56e9 > 2^31), so the
+// per-lane SIMD sums (each ≤ (2·h1/16)·125·qa² = 6.4e8 ✓ i32) are reduced
+// horizontally in i64 and stored here as i64.
+static mut L2OUT: [i64; MAX_H2] = [0; MAX_H2];
 
 #[panic_handler]
 fn ph(_: &core::panic::PanicInfo<'_>) -> ! {
@@ -94,7 +97,7 @@ pub unsafe extern "C" fn acc_ptr() -> *mut i32 {
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn l2_ptr() -> *mut i32 {
+pub unsafe extern "C" fn l2_ptr() -> *mut i64 {
     L2OUT.as_mut_ptr()
 }
 
@@ -183,18 +186,27 @@ pub unsafe extern "C" fn eval_l23() -> i32 {
                 i += 16;
             }
         }
-        let lanes = i32x4_extract_lane::<0>(sum4)
-            + i32x4_extract_lane::<1>(sum4)
-            + i32x4_extract_lane::<2>(sum4)
-            + i32x4_extract_lane::<3>(sum4);
-        L2OUT[j] = lanes;
-        // crelu: l2 is on the QB scale (>>6); screlu: on the QB×QA scale.
-        // i32 division truncates toward zero — negative quotients clamp to 0
-        // either way, matching the JS `|0` and the Python floor+clip.
-        let l2 = if SCRELU {
-            (lanes / (QB * qa)).clamp(0, qa)
+        let l0 = i32x4_extract_lane::<0>(sum4);
+        let l1 = i32x4_extract_lane::<1>(sum4);
+        let l2s = i32x4_extract_lane::<2>(sum4);
+        let l3 = i32x4_extract_lane::<3>(sum4);
+        // Per-lane SIMD sums are i32-safe by the set_dims caps: each
+        // accumulates (2·h1/16) products of ≤ 125·qa² (h1=256, qa=400 →
+        // 6.4e8; qa=1024 → 4.1e6). The HORIZONTAL sum can pass i32 for
+        // screlu (2·h1·125·qa² ≤ 2.56e9), so widen before adding.
+        let total: i64 = if SCRELU {
+            (l0 as i64) + (l1 as i64) + (l2s as i64) + (l3 as i64)
         } else {
-            (lanes >> 6).clamp(0, qa)
+            (l0 + l1 + l2s + l3) as i64
+        };
+        L2OUT[j] = total;
+        // crelu: l2 is on the QB scale (>>6); screlu: on the QB×QA scale.
+        // i64 division truncates toward zero — negative quotients clamp to 0
+        // either way, matching the JS Math.trunc and the Python floor+clip.
+        let l2 = if SCRELU {
+            ((total / (QB as i64 * qa as i64)).clamp(0, qa as i64)) as i32
+        } else {
+            ((total >> 6).clamp(0, qa as i64)) as i32
         };
         // i8 read — w3 weights are SIGNED (the u8 read cost a 1-9 incident above)
         y += (*w3.add(j) as i32) * l2;

@@ -831,7 +831,10 @@ def main():
 def quantize_and_save(model: SmallNNUE, out: str):
     """Quantize to the TS layout, write atomically, and return the quantized
     arrays (w1 feature-major, b1, w2 in-major, w3) plus (act, qa) so the
-    integer reference forward in print_reference_evals mirrors this net."""
+    integer reference forward in print_reference_evals mirrors this net.
+    The scheme is derived from model.act (not the session globals) so a
+    mismatched set_activation cannot silently mislabel the file."""
+    act, qa = model.act, QA_BY_ACT[model.act]
     w1 = model.w1.detach().cpu().numpy().clip(-0.95, 0.95)
     b1 = model.b1.detach().cpu().numpy().clip(-0.95, 0.95)
     w2 = model.w2.detach().cpu().numpy().clip(-1.95, 1.95)
@@ -840,8 +843,8 @@ def quantize_and_save(model: SmallNNUE, out: str):
     for name, arr in (("w1", w1), ("b1", b1), ("w2", w2), ("w3", w3)):
         if not np.isfinite(arr).all():
             raise SystemExit(f"quantize: {name} contains NaN/Inf - training diverged; refusing to write a corrupt net")
-    w1q = np.round(w1 * QA).astype("<i2")
-    b1q = np.round(b1 * QA).astype("<i2")
+    w1q = np.round(w1 * qa).astype("<i2")
+    b1q = np.round(b1 * qa).astype("<i2")
     w2q = np.round(w2 * QB).astype(np.int8)
     w3q = np.round(w3 * QB).astype(np.int8)
 
@@ -850,11 +853,11 @@ def quantize_and_save(model: SmallNNUE, out: str):
     w1_fm = np.transpose(w1q, (0, 2, 1))  # (2, IN, h1)
 
     blob = bytearray()
-    blob += MAGIC[ACT]
+    blob += MAGIC[act]
     blob += int(IN).to_bytes(4, "little")
     blob += int(h1).to_bytes(4, "little")
     blob += int(h2).to_bytes(4, "little")
-    blob += int(QA).to_bytes(2, "little", signed=True)
+    blob += int(qa).to_bytes(2, "little", signed=True)
     blob += int(QB).to_bytes(2, "little", signed=True)
     blob += int(SCALE).to_bytes(2, "little", signed=True)
     blob += w1_fm.astype("<i2").tobytes()
@@ -868,8 +871,8 @@ def quantize_and_save(model: SmallNNUE, out: str):
     with open(tmp, "wb") as f:
         f.write(blob)
     os.replace(tmp, out)  # atomic: a killed run can't leave a half-written net
-    print(f"quantized net -> {out} ({len(blob) / 1024:.0f}KB, magic {MAGIC[ACT].decode()}, QA={QA})")
-    return w1_fm, b1q, w2q, w3q, ACT, QA
+    print(f"quantized net -> {out} ({len(blob) / 1024:.0f}KB, magic {MAGIC[act].decode()}, QA={qa})")
+    return w1_fm, b1q, w2q, w3q, act, qa
 
 
 def nnue_forward_int(q, codes, stm):

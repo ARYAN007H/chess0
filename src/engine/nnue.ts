@@ -10,9 +10,10 @@
  *   - Activation, flagged by the file magic:
  *       crelu  (C0NNUE01, QA=1024): clamp(acc, 0, QA)
  *       screlu (C0NNUE02, QA=400):  clamp(acc, 0, QA)²   (v2 arch)
- *   - Layer 2: 2×H1 → H2 int8 weights × QB=64, then /QB (crelu: >>6) or
- *     /(QB×QA) (screlu: act² moved l2 onto the QB×QA scale) and clamp to
- *     [0, QA] (screlu re-clamps the squared l1 act to [0, QA] first).
+ *   - Layer 2: 2×H1 → H2 int8 weights × QB=64; the L1 activation is clamped
+ *     to [0, QA] (then squared for screlu), l2 is divided by QB (crelu: >>6)
+ *     or QB×QA (screlu: act² moved the sum onto that scale), then clamped
+ *     to [0, QA].
  *   - Layer 3: H2 → 1 int8 weights; cp = y × SCALE / (QB×QA) with SCALE=400.
  *
  * Weight file layout (`data/nnue-v1.bin`, little-endian):
@@ -78,7 +79,10 @@ let wasmLive = false;
 let loadStamp = 0;
 
 // Module-level scratch (allocated on load) — zero allocation per eval.
-let l2 = new Int32Array(0);
+// l2 is float64: screlu l2 sums can reach 2·h1·125·QA² (h1=64 → 2.6e9, past
+// i32 but exact in float64 < 2^53); crelu sums stay < 2^31 by the loader
+// guard, so ToInt32 in the >>6 path is exact.
+let l2 = new Float64Array(0);
 
 /** Loads a quantized net from bytes; returns a description or throws. */
 export function loadNnueWeights(bytes: Uint8Array): string {
@@ -102,6 +106,14 @@ export function loadNnueWeights(bytes: Uint8Array): string {
   if (h1 < 1 || h1 > 8192 || h2 < 1 || h2 > 8192) {
     throw new Error(`nnue: implausible dims h1=${h1} h2=${h2}`);
   }
+  // i32 budget for the wasm kernel's per-lane screlu dot accumulation:
+  // per i32x4 lane ≤ (2·h1/16)·125·qa² must stay < 2^31 (256-wide cap gives
+  // 6.4e8 at qa=400). The full l2 sum (2·h1·125·qa²) rides float64/int64 in
+  // the JS/Py mirrors, so only the wasm path needs this guard — and the
+  // kernel itself caps h1 ≤ 256. Kept here as a scheme-level invariant.
+  if (act === 'screlu' && 2 * h1 * 125 * qa * qa >= 2 ** 53) {
+    throw new Error(`nnue: screlu l2 sums could lose float64 exactness at h1=${h1}`);
+  }
   const expected = 26 + 2 * h1 * IN * 2 + 2 * h1 * 2 + 2 * h1 * h2 + h2;
   if (bytes.length !== expected) {
     throw new Error(`nnue: file size ${bytes.length} != expected ${expected} for h1=${h1} h2=${h2}`);
@@ -118,7 +130,7 @@ export function loadNnueWeights(bytes: Uint8Array): string {
   const w3 = new Int8Array(h2);
   for (let i = 0; i < h2; i++, off += 1) w3[i] = dv.getInt8(off);
   net = { h1, h2, act, qa, w1, b1, w2, w3 };
-  l2 = new Int32Array(h2);
+  l2 = new Float64Array(h2);
   loadStamp++;
   // WASM SIMD path (layer 2/3): init + write transposed weights. Returns
   // false on unsupported environments or oversized dims — the JS loop below
@@ -322,13 +334,15 @@ export function evalNnueWhitePov(pos: Position): number {
     yRaw = nnueWasmEvalL23(buf, off0, off1, h1);
   } else {
     // Layers 2+3 fused, activation applied inline while reading the buffer.
-    // int32-safe: crelu ≤64×127×1024 ≈ 8.3M; screlu ≤64×124×400² ≈ 1.27e9.
+    // Exact in float64 for any loader-accepted dims: worst-case l2 sum is
+    // 2·h1·125·qa² (crelu qa=1024, h1=8192: 2.1e9; screlu qa=400: 3.3e14;
+    // both < 2^53).
     l2.fill(0); // scratch is reused across evals — must be re-zeroed
     for (let i = 0; i < h1; i++) {
       let a = buf[off0 + i];
       if (a <= 0) continue; // negative clamps to 0 → no contribution
       if (a > qa) a = qa;
-      if (screlu) a = a * a; // ≤ 160_000, exact i32
+      if (screlu) a = a * a; // ≤ qa², exact i32
       const w2base = i * h2;
       for (let j = 0; j < h2; j++) l2[j] += w2[w2base + j] * a;
     }
@@ -342,18 +356,18 @@ export function evalNnueWhitePov(pos: Position): number {
     }
     yRaw = 0;
     if (screlu) {
-      // act² up to QA² means l2 lives on the QB×QA scale: divide (trunc —
-      // negatives clamp to 0 either way), not shift.
+      // act² moved l2 onto the QB×QA scale: divide (trunc — negatives clamp
+      // to 0 either way), not shift. l2[j] is an exact integer-valued double.
       const den = QB * qa;
       for (let j = 0; j < h2; j++) {
-        let a = (l2[j] / den) | 0;
+        let a = Math.trunc(l2[j] / den);
         if (a < 0) a = 0;
         else if (a > qa) a = qa;
         yRaw += w3[j] * a;
       }
     } else {
       for (let j = 0; j < h2; j++) {
-        const a = l2[j] >> 6; // /QB
+        const a = l2[j] >> 6; // /QB (l2 fits i32 for crelu — loader-guarded)
         const clamped = a < 0 ? 0 : a > qa ? qa : a;
         yRaw += w3[j] * clamped;
       }

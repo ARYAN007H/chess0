@@ -330,3 +330,14 @@ test('net too wide for the wasm kernel falls back to JS and still matches', () =
   loadNnueWeights(buildNetBlob(2, h1, h2, b1, w2, w3));
   assert.equal(evalNnueWhitePov(newStartPosition()), oracleCp(2, h1, h2, b1, w2, w3));
 });
+
+test('crelu JS fallback path matches the oracle too', () => {
+  // h2=12 is not a multiple of 8, so the wasm kernel refuses the net and the
+  // eval must run the plain-JS loop — otherwise the crelu JS path is only
+  // ever covered on wasm-less machines.
+  const h1 = 8;
+  const h2 = 12;
+  const { b1, w2, w3 } = syntheticWeights(h1, h2);
+  loadNnueWeights(buildNetBlob(1, h1, h2, b1, w2, w3));
+  assert.equal(evalNnueWhitePov(newStartPosition()), oracleCp(1, h1, h2, b1, w2, w3));
+});
