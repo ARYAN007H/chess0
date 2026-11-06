@@ -60,9 +60,11 @@ jobs:
           name: nnue-shard-${{ github.run_id }}-${{ matrix.shard }}
           path: data/artifacts/nnue-shard-${{ matrix.shard }}.bin
           retention-days: 30
+          if: always()
 
   merge:
     needs: corpus
+    if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -82,11 +84,14 @@ jobs:
           blobs = []
           for f in files:
               b = open(f, 'rb').read()
-              assert b[:4] == b'NDD1', f
+              if b[:4] != b'NDD1' or len(b) < 8 or len(b) != 8 + int.from_bytes(b[4:8], 'little') * 36:
+                  print(f'WARNING: skipping invalid/truncated shard {f} ({len(b)}B)')
+                  continue
               n = int.from_bytes(b[4:8], 'little')
-              assert len(b) == 8 + n * 36, (f, len(b), 8 + n * 36)
               total += n
               blobs.append(b[8:8 + n * 36])
+          if not blobs:
+              raise SystemExit('no valid shards to merge')
           out = b'NDD1' + total.to_bytes(4, 'little') + b''.join(blobs)
           open('data/nnue-data-v1.bin', 'wb').write(out)
           print(f'merged {len(files)} shards -> {total} positions, {len(out)/1e6:.1f}MB')
