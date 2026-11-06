@@ -778,6 +778,8 @@ def main():
         raise SystemExit("--decode-only needs --data (a parquet glob)")
     if args.predecoded and args.data:
         raise SystemExit("pass either --data or --predecoded, not both")
+    if args.scratch_dir:
+        os.makedirs(args.scratch_dir, exist_ok=True)  # mkdtemp(dir=...) won't create it
     set_activation(args.activation)
     torch.manual_seed(args.seed)
     device = "cuda" if torch.cuda.is_available() else "cpu"
