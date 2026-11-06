@@ -43,6 +43,7 @@ Usage (Kaggle GPU or CPU):
 """
 
 import argparse
+import json
 import math
 import os
 
@@ -528,22 +529,99 @@ def _load_parquet_parallel(files, min_depth: int, workers: int, scratch_dir: str
     featB = np.memmap(tmpdir + "/fb.raw", dtype=np.int16, mode="c", shape=(kept, 32))
     mask = np.memmap(tmpdir + "/m.raw", dtype=np.uint8, mode="c", shape=(kept, 32))
     labels = np.memmap(tmpdir + "/l.raw", dtype=np.float32, mode="c", shape=(kept,))
+    load_parquet.last_scratch_dir = tmpdir
     return featA, featB, labels, None, mask
 
 
-def load_parquet(pattern: str, max_positions: int = 0, min_depth: int = 15, workers: int = 0, scratch_dir: str = ""):
+def load_parquet(pattern: str, max_positions: int = 0, min_depth: int = 15, workers: int = 0, scratch_dir: str = "", shard: int = 0, shards: int = 1):
     """Lichess evaluations dataset (dedup Parquet). Capped/subsampled runs use
     the proven sequential loader; uncapped multi-file runs (full-dataset
     pretrains) use the parallel decoder (one process per file, canary audit
-    first). Both return disk-backed memmaps — RAM stays ~flat with N."""
+    first). Both return disk-backed memmaps — RAM stays ~flat with N.
+
+    shards > 1 splits the FILE LIST by index (files[shard::shards]) so a big
+    corpus can be decoded in parallel Kaggle sessions (the --decode-only
+    chunks assemble into a --predecoded dataset). last_scratch_dir records
+    where the memmaps landed so --decode-only can write its manifest."""
     import glob as _glob
     files = sorted(_glob.glob(pattern, recursive=True))  # ** supported
     if not files:
         raise ValueError(f"no parquet files match {pattern}")
+    if not (0 <= shard < shards) or shards < 1:
+        raise ValueError(f"invalid shard split: shard={shard} shards={shards}")
+    if shards > 1:
+        files = files[shard::shards]
+        print(f"shard {shard}/{shards}: decoding {len(files)} parquet files (every {shards}th of the sorted list)")
     if max_positions or workers == 1 or len(files) == 1:
-        return _load_parquet_sequential(files, max_positions, min_depth)
+        out = _load_parquet_sequential(files, max_positions, min_depth, scratch_dir)
+        return out
     import multiprocessing as _mp
     return _load_parquet_parallel(files, min_depth, workers or min(_mp.cpu_count() or 1, 8), scratch_dir)
+
+
+# Set by the parquet loaders: the directory holding fa/fb/m/l.raw for the
+# most recent load (used by --decode-only to write its manifest).
+load_parquet.last_scratch_dir = ""
+
+
+class ChunkedRows:
+    """Global-row indexing over a list of disk-backed (N_i, C) memmaps —
+    zero copy at load, per-batch gather at access (the training loop's only
+    access pattern is obj[LongTensor] → (len, C) tensor)."""
+
+    def __init__(self, parts):
+        self.parts = parts
+        self.sizes = [int(p.shape[0]) for p in parts]
+        self.starts = np.concatenate(([0], np.cumsum(self.sizes))).astype(np.int64)
+        self.N = int(self.starts[-1])
+        self.C = int(parts[0].shape[1])
+        self.tdtype = torch.from_numpy(np.empty(1, parts[0].dtype)).dtype
+
+    @property
+    def shape(self):
+        return (self.N, self.C)
+
+    def __getitem__(self, b):
+        idx = b.detach().cpu().numpy() if isinstance(b, torch.Tensor) else np.asarray(b)
+        out = torch.empty((len(idx), self.C), dtype=self.tdtype)
+        cid = np.searchsorted(self.starts, idx, side="right") - 1
+        for k in np.unique(cid):
+            m = cid == k
+            local = idx[m] - self.starts[k]
+            out[torch.from_numpy(m)] = torch.from_numpy(np.asarray(self.parts[k][local]))
+        return out
+
+
+def load_predecoded(dirs):
+    """Reassembles a --decode-only chunk set (dirs containing fa/fb/m/l.raw +
+    manifest.json) into zero-copy ChunkedRows sources. Validates every chunk
+    against its manifest and the on-disk sizes before trusting it."""
+    if not dirs:
+        raise ValueError("--predecoded got no directories")
+    pa, pb, pm, pl = [], [], [], []
+    for d in dirs:
+        man_path = os.path.join(d, "manifest.json")
+        if not os.path.isfile(man_path):
+            raise ValueError(f"{d}: no manifest.json (is this a --decode-only chunk dir?)")
+        man = json.load(open(man_path))
+        n = int(man["positions"])
+        expect = {"fa": (np.int16, (n, 32)), "fb": (np.int16, (n, 32)),
+                  "m": (np.uint8, (n, 32)), "l": (np.float32, (n,))}
+        for key, (dt, shape) in expect.items():
+            p = os.path.join(d, key + ".raw")
+            want = int(np.prod(shape)) * np.dtype(dt).itemsize
+            got = os.path.getsize(p)
+            if got != want:
+                raise ValueError(f"{d}/{key}.raw: size {got} != expected {want} for {n} positions")
+        pa.append(np.memmap(os.path.join(d, "fa.raw"), np.int16, "r", shape=(n, 32)))
+        pb.append(np.memmap(os.path.join(d, "fb.raw"), np.int16, "r", shape=(n, 32)))
+        pm.append(np.memmap(os.path.join(d, "m.raw"), np.uint8, "r", shape=(n, 32)))
+        pl.append(np.memmap(os.path.join(d, "l.raw"), np.float32, "r", shape=(n, 1)))
+        print(f"predecoded chunk {d}: {n} positions (min_depth {man.get('min_depth')}, shard {man.get('shard')}/{man.get('shards')})")
+    featA, featB, mask = ChunkedRows(pa), ChunkedRows(pb), ChunkedRows(pm)
+    labels = ChunkedRows(pl)
+    print(f"predecoded total: {labels.N} positions from {len(dirs)} chunks")
+    return featA, featB, labels, mask
 
 
 def _load_parquet_sequential(files, max_positions: int, min_depth: int, scratch_dir: str = ""):
@@ -619,6 +697,7 @@ def _load_parquet_sequential(files, max_positions: int, min_depth: int, scratch_
     labels = np.memmap(os.path.join(tmpdir, "l.raw"), dtype=np.float32, mode="c", shape=(kept,))
     print(f"parquet: kept {kept} positions (scanned {scanned}, skipped {skipped}) at depth >= {min_depth}")
     audit.final_check()
+    load_parquet.last_scratch_dir = tmpdir
     return featA, featB, labels, None, mask
 
 
@@ -660,7 +739,7 @@ class SmallNNUE(nn.Module):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--data", required=True)
+    ap.add_argument("--data", default="")
     ap.add_argument("--out", default="nnue-v1.bin")
     ap.add_argument("--checkpoint", default="nnue_float.pt")
     ap.add_argument("--epochs", type=int, default=8)
@@ -679,33 +758,68 @@ def main():
     ap.add_argument("--activation", choices=("crelu", "screlu"), default="crelu",
                     help="L1 activation: crelu=clamp(v,0,1) [v1, magic C0NNUE01, QA=1024]; "
                          "screlu=clamp(v,0,1)^2 [v2, magic C0NNUE02, QA=400]")
+    ap.add_argument("--shard", type=int, default=0, help="0-based shard index for --data parquet globs")
+    ap.add_argument("--shards", type=int, default=1, help="total shards (>1 splits the file list by index)")
+    ap.add_argument("--predecoded", default="",
+                    help="comma-separated --decode-only chunk dirs to train from (skips parquet decode)")
+    ap.add_argument("--decode-only", action="store_true",
+                    help="decode the parquet shard into --scratch-dir and exit (writes manifest.json); no training")
     ap.add_argument("--resume", default="",
                     help="float .pt state_dict to fine-tune from (default: random init)")
     args = ap.parse_args()
 
     if args.workers < 0 or args.max_positions < 0 or args.min_depth < 1 or args.epochs < 0 or args.batch < 1:
         raise SystemExit("invalid arguments: workers/max-positions/epochs must be >= 0, min-depth >= 1, batch >= 1")
+    if not (0 <= args.shard < args.shards) or args.shards < 1:
+        raise SystemExit(f"invalid --shard/--shards: {args.shard}/{args.shards}")
+    if bool(args.predecoded) + bool(args.decode_only) > 1:
+        raise SystemExit("--predecoded and --decode-only are mutually exclusive")
+    if args.decode_only and not args.data:
+        raise SystemExit("--decode-only needs --data (a parquet glob)")
+    if args.predecoded and args.data:
+        raise SystemExit("pass either --data or --predecoded, not both")
     set_activation(args.activation)
     torch.manual_seed(args.seed)
     device = "cuda" if torch.cuda.is_available() else "cpu"
     print(f"device: {device}  net: 768x{args.h1}x2 -> {args.h2} -> 1  act: {ACT} (QA={QA}, magic {MAGIC[ACT].decode()})")
 
-    if "*" in args.data or os.path.isdir(args.data):
+    if args.predecoded:
+        featA, featB, labels, mask = load_predecoded([d for d in args.predecoded.split(",") if d])
+        results = None
+    elif not args.data:
+        raise SystemExit("--data is required unless --predecoded is given")
+    elif "*" in args.data or os.path.isdir(args.data):
         # globs/directories are parquet-only; a non-parquet glob fails inside
         # load_parquet with "no parquet files match" (no silent .bin misroute)
         featA, featB, labels, results, mask = load_parquet(
-            args.data, args.max_positions, args.min_depth, args.workers, args.scratch_dir)
+            args.data, args.max_positions, args.min_depth, args.workers, args.scratch_dir,
+            args.shard, args.shards)
     elif args.data.endswith(".csv"):
         featA, featB, labels, results, mask = load_csv(args.data, args.max_positions)
     elif args.data.endswith(".bin"):
         featA, featB, labels, results, mask = load_data(args.data)
     elif args.data.endswith(".parquet"):
         featA, featB, labels, results, mask = load_parquet(
-            args.data, args.max_positions, args.min_depth, args.workers, args.scratch_dir)
+            args.data, args.max_positions, args.min_depth, args.workers, args.scratch_dir,
+            args.shard, args.shards)
     else:
         raise SystemExit(f"--data must be .csv, .bin or .parquet (got {args.data})")
     n = featA.shape[0]
     print(f"data: {n} positions")
+
+    if args.decode_only:
+        # the memmaps already live in the loader's scratch dir (--scratch-dir
+        # should point at the output chunk dir on Kaggle); persist the manifest
+        sdir = load_parquet.last_scratch_dir
+        if not sdir or not os.path.isfile(os.path.join(sdir, "fa.raw")):
+            raise SystemExit("--decode-only: no chunk memmaps found (sequential loader stash missing?)")
+        json.dump({
+            "positions": n, "min_depth": args.min_depth,
+            "shard": args.shard, "shards": args.shards,
+            "files": ["fa.raw", "fb.raw", "m.raw", "l.raw"],
+        }, open(os.path.join(sdir, "manifest.json"), "w"))
+        print(f"decode-only: manifest written to {sdir} ({n} positions)")
+        return
 
     # shuffle + 2% validation split
     rng = np.random.default_rng(12345)
@@ -720,10 +834,20 @@ def main():
     # per batch we slice → cast to long → move (≈8MB/step). Storing int64 on
     # the GPU would need 10.2GB VRAM and OOM the T4. Mask stays uint8 host-side
     # (saves ~1.9GB at 20M) and casts to float on the GPU.
-    fA = torch.from_numpy(featA)      # int16 (N, 32) on CPU
-    fB = torch.from_numpy(featB)      # int16 (N, 32) on CPU
-    y = torch.from_numpy(labels / SCALE).to(dev)          # network trains in w3 units (cp/400)
-    msk = torch.from_numpy(mask)      # uint8 (N, 32) on CPU
+    if isinstance(featA, ChunkedRows):
+        # --predecoded: zero-copy chunked row sources; labels flatten to one
+        # GPU tensor (340M float32 = 1.4GB VRAM, fine on a T4)
+        fA, fB, msk = featA, featB, mask
+        y = torch.empty(n, dtype=torch.float32)
+        for k, part in enumerate(labels.parts):
+            lo, hi = int(labels.starts[k]), int(labels.starts[k + 1])
+            y[lo:hi] = torch.from_numpy(np.asarray(part[:, 0])) / SCALE
+        y = y.to(dev)                     # network trains in w3 units (cp/400)
+    else:
+        fA = torch.from_numpy(featA)      # int16 (N, 32) on CPU
+        fB = torch.from_numpy(featB)      # int16 (N, 32) on CPU
+        y = torch.from_numpy(labels / SCALE).to(dev)      # network trains in w3 units (cp/400)
+        msk = torch.from_numpy(mask)      # uint8 (N, 32) on CPU
 
     model = SmallNNUE(h1=args.h1, h2=args.h2, act=ACT).to(dev)
     if args.resume:
