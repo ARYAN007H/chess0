@@ -44,7 +44,7 @@ const MOVETIME = Math.max(50, arg('movetime', 250));
 const BOOK_PLIES = Math.max(0, arg('book-plies', 6));
 const MAX_PLIES = 300;
 
-type Variant = 'v2' | 'v3' | 'v3tuned' | 'v3base' | 'v2tuned' | 'v2base' | 'v3nnue';
+type Variant = 'v2' | 'v3' | 'v3tuned' | 'v3base' | 'v2tuned' | 'v2base' | 'v3nnue' | 'v3nnue2';
 const SIDE_A = argStr('a', 'v2') as Variant;
 const SIDE_B = argStr('b', 'v3') as Variant;
 
@@ -95,6 +95,15 @@ const PARAMS_SPEC: Partial<Record<Variant, { file: string; kind: 'v3' | 'v2' }>>
 };
 
 const NNUE_FILE = 'data/nnue-v1.bin';
+// Second NNUE slot (net-vs-net gates: champion vs challenger). Each NNUE
+// side reloads its file only when the OTHER NNUE side played last; the swap
+// bumps loadStamp, so per-switch accumulator repair costs hit both sides
+// equally.
+const NNUE_FILE2 = argStr('nnue2', '');
+const NNUE_FILES: Partial<Record<Variant, string>> = { v3nnue: NNUE_FILE, v3nnue2: NNUE_FILE2 };
+if ((SIDE_A === 'v3nnue2' || SIDE_B === 'v3nnue2') && !NNUE_FILE2) {
+  throw new Error('--nnue2 <file> is required when a side is v3nnue2');
+}
 let nnueLoadedFor: Variant | null = null;
 
 const paramsCache = new Map<Variant, { scalars: Record<string, number>; tables: Record<string, number[]> } | null>();
@@ -102,14 +111,15 @@ const paramsCache = new Map<Variant, { scalars: Record<string, number>; tables: 
 function applySideParams(side: Variant): void {
   // NNUE eval override: v3 search (make/unmake, TT, ordering) with the net
   // answering leaf evaluations. Mutually exclusive with v3 eval-params tweaks.
-  if (side === 'v3nnue') {
+  const nnueFile = NNUE_FILES[side];
+  if (nnueFile) {
     resetEvalParams();
     resetEvalV2Params();
     if (nnueLoadedFor !== side) {
       clearNnue();
-      loadNnueWeights(readFileSync(NNUE_FILE));
+      loadNnueWeights(readFileSync(nnueFile));
       nnueLoadedFor = side;
-      console.log(`loaded ${NNUE_FILE}`);
+      console.log(`loaded ${nnueFile}`);
     }
     setEvalOverride(evalNnueWhitePov);
     clearEvalCaches();
@@ -290,6 +300,7 @@ const tally: Record<Variant, Tally> = {
   v2tuned: newTally(),
   v2base: newTally(),
   v3nnue: newTally(),
+  v3nnue2: newTally(),
 };
 let games = 0;
 let sprtResult: 'ACCEPT' | 'REJECT' | 'INCONCLUSIVE' | null = null;
