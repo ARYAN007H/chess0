@@ -1,5 +1,54 @@
 {
-  "note": "factory defaults (see src/engine/evalV2Params.ts)",
-  "scalars": {},
-  "tables": {}
+  "engine": "v2",
+  "scalars": {
+    "tempo": 12,
+    "bishopPairMg": 0,
+    "bishopPairEg": 31,
+    "doubledMg": -23,
+    "doubledEg": -12,
+    "isolatedMg": -14,
+    "isolatedEg": -12,
+    "rookOpenMg": 20,
+    "rookOpenEg": 0,
+    "rookSemiMg": 0,
+    "rookSemiEg": 43,
+    "rook7thMg": 13,
+    "rook7thEg": 16,
+    "mobNMg": 0,
+    "mobNEg": 0,
+    "mobBMg": 1,
+    "mobBEg": 4,
+    "mobRMg": 2,
+    "mobREg": 3,
+    "mobQMg": 0,
+    "mobQEg": 7,
+    "baseN": 4,
+    "baseB": 12,
+    "baseR": 17,
+    "baseQ": 21,
+    "shieldClose": 4,
+    "shieldOpen": -11
+  },
+  "tables": {
+    "passedMg": [
+      0,
+      14,
+      19,
+      19,
+      19,
+      19,
+      19,
+      0
+    ],
+    "passedEg": [
+      0,
+      32,
+      32,
+      68,
+      88,
+      88,
+      88,
+      0
+    ]
+  }
 }
