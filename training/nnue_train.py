@@ -592,6 +592,52 @@ class ChunkedRows:
         return out
 
 
+def shuffle_stage(srcs: list[str], out_dir: str, block_rows: int = 1 << 22, seed: int = 12345):
+    """Block-granularity global shuffle of decoded chunks into out_dir as four
+    plain contiguous files (sfa/sfb/sm/sl.raw). Source blocks (block_rows
+    rows each) are read SEQUENTIALLY and written in permuted order; row order
+    inside a block is left to the trainer's within-block randperm.
+
+    Why: batches that touch one ~660MB block at a time are page-cache
+    resident, while gathers scattered over 280M rows are page-fetch bound
+    (~4KB granularity → ~40MB/s effective) even on the overlay disk — the
+    difference is ~1.1TB vs ~46GB of reads per epoch."""
+    import time
+    os.makedirs(out_dir, exist_ok=True)
+    sizes = [int(json.load(open(os.path.join(d, "manifest.json")))["positions"]) for d in srcs]
+    n = int(sum(sizes))
+    starts = np.concatenate(([0], np.cumsum(sizes))).astype(np.int64)
+    nblocks = (n + block_rows - 1) // block_rows
+    rng = np.random.default_rng(seed)
+    perm_blocks = rng.permutation(nblocks)
+    outs = {k: open(os.path.join(out_dir, f"s{k}.raw"), "wb") for k in ("fa", "fb", "m", "l")}
+    opens = {
+        "fa": [np.memmap(os.path.join(d, "fa.raw"), np.int16, "r", shape=(s, 32)) for d, s in zip(srcs, sizes)],
+        "fb": [np.memmap(os.path.join(d, "fb.raw"), np.int16, "r", shape=(s, 32)) for d, s in zip(srcs, sizes)],
+        "m": [np.memmap(os.path.join(d, "m.raw"), np.uint8, "r", shape=(s, 32)) for d, s in zip(srcs, sizes)],
+        "l": [np.memmap(os.path.join(d, "l.raw"), np.float32, "r", shape=(s,)) for d, s in zip(srcs, sizes)],
+    }
+    t0 = time.time()
+    for i, src_block in enumerate(perm_blocks):
+        lo = int(src_block) * block_rows
+        hi = min(lo + block_rows, n)
+        for ck in range(int(np.searchsorted(starts, lo, side="right")) - 1,
+                        min(int(np.searchsorted(starts, hi, side="left")), len(srcs))):
+            clo = max(lo, int(starts[ck])) - int(starts[ck])
+            chi = min(hi, int(starts[ck + 1])) - int(starts[ck])
+            outs["fa"].write(np.asarray(opens["fa"][ck][clo:chi]).tobytes())
+            outs["fb"].write(np.asarray(opens["fb"][ck][clo:chi]).tobytes())
+            outs["m"].write(np.asarray(opens["m"][ck][clo:chi]).tobytes())
+            outs["l"].write(np.asarray(opens["l"][ck][clo:chi]).tobytes())
+        if (i + 1) % 10 == 0:
+            print(f"  shuffle-staged {i + 1}/{nblocks} blocks ({(i + 1) * block_rows / 1e6:.0f}M rows, "
+                  f"{time.time() - t0:.0f}s)", flush=True)
+    for f in outs.values():
+        f.close()
+    print(f"shuffle-stage: {n} positions -> {out_dir} in {time.time() - t0:.0f}s")
+    return n
+
+
 def load_predecoded(dirs):
     """Reassembles a --decode-only chunk set (dirs containing fa/fb/m/l.raw +
     manifest.json) into zero-copy ChunkedRows sources. Validates every chunk
@@ -762,6 +808,9 @@ def main():
     ap.add_argument("--shards", type=int, default=1, help="total shards (>1 splits the file list by index)")
     ap.add_argument("--predecoded", default="",
                     help="comma-separated --decode-only chunk dirs to train from (skips parquet decode)")
+    ap.add_argument("--shuffle-stage", default="",
+                    help="dir for a one-time block-shuffled staging copy of the --predecoded chunks "
+                         "(sequential block permute; makes training gathers page-cache resident)")
     ap.add_argument("--decode-only", action="store_true",
                     help="decode the parquet shard into --scratch-dir and exit (writes manifest.json); no training")
     ap.add_argument("--resume", default="",
@@ -785,7 +834,19 @@ def main():
     device = "cuda" if torch.cuda.is_available() else "cpu"
     print(f"device: {device}  net: 768x{args.h1}x2 -> {args.h2} -> 1  act: {ACT} (QA={QA}, magic {MAGIC[ACT].decode()})")
 
-    if args.predecoded:
+    staged_sorted = False
+    if args.shuffle_stage:
+        if not args.predecoded:
+            raise SystemExit("--shuffle-stage needs --predecoded")
+        dirs = [d for d in args.predecoded.split(",") if d]
+        n_staged = shuffle_stage(dirs, args.shuffle_stage)
+        featA = np.memmap(os.path.join(args.shuffle_stage, "sfa.raw"), np.int16, "c", shape=(n_staged, 32))
+        featB = np.memmap(os.path.join(args.shuffle_stage, "sfb.raw"), np.int16, "c", shape=(n_staged, 32))
+        mask = np.memmap(os.path.join(args.shuffle_stage, "sm.raw"), np.uint8, "c", shape=(n_staged, 32))
+        labels = np.memmap(os.path.join(args.shuffle_stage, "sl.raw"), np.float32, "c", shape=(n_staged,))
+        results = None
+        staged_sorted = True
+    elif args.predecoded:
         featA, featB, labels, mask = load_predecoded([d for d in args.predecoded.split(",") if d])
         results = None
     elif not args.data:
@@ -825,7 +886,12 @@ def main():
 
     # shuffle + 2% validation split
     rng = np.random.default_rng(12345)
-    perm = rng.permutation(n)
+    if staged_sorted:
+        # the staged file is already block-shuffled: identity order keeps each
+        # 4M-row training block disk-contiguous (page-cache resident gathers)
+        perm = np.arange(n)
+    else:
+        perm = rng.permutation(n)
     n_val = max(1, min(int(n * 0.02), n - 1))  # 2% validation; never swallows tiny debug sets
     val_idx = torch.from_numpy(perm[:n_val])
     trn_idx = torch.from_numpy(perm[n_val:])
