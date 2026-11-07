@@ -843,7 +843,9 @@ def main():
         y = torch.empty(n, dtype=torch.float32)
         for k, part in enumerate(labels.parts):
             lo, hi = int(labels.starts[k]), int(labels.starts[k + 1])
-            y[lo:hi] = torch.from_numpy(np.asarray(part[:, 0])) / SCALE
+            # .copy() materializes a writable array — from_numpy warns on the
+            # memmap's read-only view otherwise (benign but noisy)
+            y[lo:hi] = torch.from_numpy(np.asarray(part[:, 0]).copy()) / SCALE
         y = y.to(dev)                     # network trains in w3 units (cp/400)
     else:
         fA = torch.from_numpy(featA)      # int16 (N, 32) on CPU
