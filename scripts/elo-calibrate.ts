@@ -35,11 +35,23 @@ const argNum = (name: string, def: number): number => {
   return i >= 0 && process.argv[i + 1] ? Number(process.argv[i + 1]) : def;
 };
 
+const numArg = (v: number, name: string): number => {
+  if (!Number.isFinite(v)) {
+    console.error(`--${name} must be a finite number`);
+    process.exit(1);
+  }
+  return v;
+};
+
 const SF_PATH = argStr('sf', '');
 const ELO_STEPS = argStr('elo', '1600,2000,2400').split(',').map(Number);
-const PAIRS = Math.max(1, argNum('pairs', 25));
-const MOVETIME = Math.max(50, argNum('movetime', 250));
-const BOOK_PLIES = Math.max(0, argNum('book-plies', 6));
+if (ELO_STEPS.length === 0 || ELO_STEPS.some((e) => !Number.isFinite(e))) {
+  console.error('--elo must be a comma-separated list of finite numbers');
+  process.exit(1);
+}
+const PAIRS = Math.max(1, numArg(argNum('pairs', 25), 'pairs'));
+const MOVETIME = Math.max(50, numArg(argNum('movetime', 250), 'movetime'));
+const BOOK_PLIES = Math.max(0, numArg(argNum('book-plies', 6), 'book-plies'));
 const MAX_PLIES = 300;
 const NET = argStr('net', 'data/nnue-v1.bin');
 
@@ -66,18 +78,32 @@ class UciEngine {
   private queue: string[] = [];
   private waiter: (() => void) | null = null;
   private quitting = false;
+  private dead: string | null = null; // set by process error/exit; until() throws it
+  private options = new Set<string>();
   name = '';
 
-  constructor(path: string, elo: number) {
+  constructor(path: string) {
     this.proc = spawn(path, [], { stdio: ['pipe', 'pipe', 'inherit'] });
     const rl = createInterface({ input: this.proc.stdout, terminal: false });
     rl.on('line', (line) => {
       if (line.startsWith('id name ')) this.name = line.slice(8).trim();
+      if (line.startsWith('option name ')) this.options.add(line.split(/\s+/)[2] ?? '');
       this.queue.push(line);
       this.waiter?.();
     });
+    // every failure path routes through `dead` so until() throws cleanly
+    // (throwing inside an EventEmitter callback would bypass the top-level catch)
+    this.proc.on('error', (err) => {
+      if (!this.quitting && this.dead === null) this.dead = `stockfish spawn error: ${err.message}`;
+      this.waiter?.();
+    });
+    this.proc.stdin.on('error', () => {
+      if (!this.quitting && this.dead === null) this.dead = 'stockfish stdin closed';
+      this.waiter?.();
+    });
     this.proc.on('exit', (code) => {
-      if (!this.quitting) throw new Error(`stockfish exited early (code ${code})`);
+      if (!this.quitting && this.dead === null) this.dead = `stockfish exited early (code ${code})`;
+      this.waiter?.();
     });
   }
 
@@ -89,7 +115,15 @@ class UciEngine {
     const t0 = Date.now();
     for (;;) {
       const idx = this.queue.findIndex(pred);
-      if (idx >= 0) return this.queue.splice(idx, 1)[0];
+      // drain everything up to and including the match — the `info depth` spam
+      // before a bestmove is dead weight; unbounded growth would both leak
+      // memory and make every subsequent findIndex O(n²) over stale lines
+      if (idx >= 0) {
+        const matched = this.queue[idx];
+        this.queue.splice(0, idx + 1);
+        return matched;
+      }
+      if (this.dead) throw new Error(this.dead);
       if (Date.now() - t0 > timeoutMs) throw new Error(`timeout waiting for UCI reply`);
       await new Promise<void>((r) => {
         this.waiter = r;
@@ -102,6 +136,9 @@ class UciEngine {
   async handshake(): Promise<void> {
     await this.send('uci');
     await this.until((l) => l === 'uciok', 10000);
+    if (!this.options.has('UCI_LimitStrength') || !this.options.has('UCI_Elo')) {
+      throw new Error(`${this.name || 'engine'} does not expose UCI_LimitStrength/UCI_Elo — cannot pin strength`);
+    }
     await this.send('isready');
     await this.until((l) => l === 'readyok', 10000);
   }
@@ -262,7 +299,7 @@ function eloLine(t: LevelTally, games: number): string {
 (async () => {
   const results: LevelTally[] = [];
   for (const elo of ELO_STEPS) {
-    const sf = new UciEngine(SF_PATH, elo);
+    const sf = new UciEngine(SF_PATH);
     await sf.handshake();
     await sf.setStrength(elo);
     console.log(`\n=== level SF@${elo}  (${sf.name}) ===`);
@@ -310,13 +347,15 @@ function eloLine(t: LevelTally, games: number): string {
   const allStrong = results.every((t) => scoreOf(t) >= 0.5);
   const allWeak = results.every((t) => scoreOf(t) <= 0.5);
   if (allStrong) bracket = `above SF@${Math.max(...results.map((r) => r.elo))} — extend the ladder upward`;
-  if (allWeak) bracket = `below SF@${Math.min(...results.map((r) => r.elo))} — extend the ladder downward`;
+  else if (allWeak) bracket = `below SF@${Math.min(...results.map((r) => r.elo))} — extend the ladder downward`;
   console.log(`chess0 (${NET}) at ${MOVETIME}ms/move: ${bracket}`);
   console.log(
     `caveat: SF UCI_Elo is calibrated for ~1min/game blitz; at ${MOVETIME}ms every level plays ` +
       `weaker than its label, so read this as a bracket between SF strength levels, not an absolute rating.`,
   );
-  process.exit(0);
+  // exitCode (not exit): console.log to a pipe is async — a synchronous exit
+  // in the same tick can truncate the ladder summary this script exists to print
+  process.exitCode = 0;
 })().catch((err) => {
   console.error(err);
   process.exit(1);

@@ -603,8 +603,26 @@ def shuffle_stage(srcs: list[str], out_dir: str, block_rows: int = 1 << 22, seed
     (~4KB granularity → ~40MB/s effective) even on the overlay disk — the
     difference is ~1.1TB vs ~46GB of reads per epoch."""
     import time
+    if not srcs:
+        raise ValueError("shuffle_stage got no source chunk dirs")
     os.makedirs(out_dir, exist_ok=True)
-    sizes = [int(json.load(open(os.path.join(d, "manifest.json")))["positions"]) for d in srcs]
+    sizes = []
+    for d in srcs:
+        man_path = os.path.join(d, "manifest.json")
+        if not os.path.isfile(man_path):
+            raise ValueError(f"{d}: no manifest.json (is this a --decode-only chunk dir?)")
+        with open(man_path) as f:
+            sizes.append(int(json.load(f)["positions"]))
+    # validate on-disk sizes BEFORE opening outputs (same contract as
+    # load_predecoded) — a short raw would otherwise die inside np.memmap with
+    # the outputs already truncated, a long raw would be silently truncated
+    for d, s in zip(srcs, sizes):
+        for key, (dt, width) in (("fa", (np.int16, 32)), ("fb", (np.int16, 32)),
+                                 ("m", (np.uint8, 32)), ("l", (np.float32, 1))):
+            want = int(s) * width * np.dtype(dt).itemsize
+            got = os.path.getsize(os.path.join(d, key + ".raw"))
+            if got != want:
+                raise ValueError(f"{d}/{key}.raw: size {got} != expected {want} for {s} positions")
     n = int(sum(sizes))
     starts = np.concatenate(([0], np.cumsum(sizes))).astype(np.int64)
     nblocks = (n + block_rows - 1) // block_rows
@@ -618,22 +636,24 @@ def shuffle_stage(srcs: list[str], out_dir: str, block_rows: int = 1 << 22, seed
         "l": [np.memmap(os.path.join(d, "l.raw"), np.float32, "r", shape=(s,)) for d, s in zip(srcs, sizes)],
     }
     t0 = time.time()
-    for i, src_block in enumerate(perm_blocks):
-        lo = int(src_block) * block_rows
-        hi = min(lo + block_rows, n)
-        for ck in range(int(np.searchsorted(starts, lo, side="right")) - 1,
-                        min(int(np.searchsorted(starts, hi, side="left")), len(srcs))):
-            clo = max(lo, int(starts[ck])) - int(starts[ck])
-            chi = min(hi, int(starts[ck + 1])) - int(starts[ck])
-            outs["fa"].write(np.asarray(opens["fa"][ck][clo:chi]).tobytes())
-            outs["fb"].write(np.asarray(opens["fb"][ck][clo:chi]).tobytes())
-            outs["m"].write(np.asarray(opens["m"][ck][clo:chi]).tobytes())
-            outs["l"].write(np.asarray(opens["l"][ck][clo:chi]).tobytes())
-        if (i + 1) % 10 == 0:
-            print(f"  shuffle-staged {i + 1}/{nblocks} blocks ({(i + 1) * block_rows / 1e6:.0f}M rows, "
-                  f"{time.time() - t0:.0f}s)", flush=True)
-    for f in outs.values():
-        f.close()
+    try:
+        for i, src_block in enumerate(perm_blocks):
+            lo = int(src_block) * block_rows
+            hi = min(lo + block_rows, n)
+            for ck in range(int(np.searchsorted(starts, lo, side="right")) - 1,
+                            min(int(np.searchsorted(starts, hi, side="left")), len(srcs))):
+                clo = max(lo, int(starts[ck])) - int(starts[ck])
+                chi = min(hi, int(starts[ck + 1])) - int(starts[ck])
+                outs["fa"].write(np.asarray(opens["fa"][ck][clo:chi]).tobytes())
+                outs["fb"].write(np.asarray(opens["fb"][ck][clo:chi]).tobytes())
+                outs["m"].write(np.asarray(opens["m"][ck][clo:chi]).tobytes())
+                outs["l"].write(np.asarray(opens["l"][ck][clo:chi]).tobytes())
+            if (i + 1) % 10 == 0:
+                print(f"  shuffle-staged {i + 1}/{nblocks} blocks ({min((i + 1) * block_rows, n) / 1e6:.0f}M rows, "
+                      f"{time.time() - t0:.0f}s)", flush=True)
+    finally:
+        for f in outs.values():
+            f.close()
     print(f"shuffle-stage: {n} positions -> {out_dir} in {time.time() - t0:.0f}s")
     return n
 
@@ -888,13 +908,18 @@ def main():
     rng = np.random.default_rng(12345)
     if staged_sorted:
         # the staged file is already block-shuffled: identity order keeps each
-        # 4M-row training block disk-contiguous (page-cache resident gathers)
+        # 4M-row training block disk-contiguous (page-cache resident gathers).
+        # Validation comes from the TAIL so the training range starts at row 0
+        # and stays block-aligned — a head split at 2% would offset every
+        # training block by n_val rows (straddling two staged blocks each) and
+        # double the page-cache working set. Equally random either way on a
+        # block-shuffled file.
         perm = np.arange(n)
     else:
         perm = rng.permutation(n)
     n_val = max(1, min(int(n * 0.02), n - 1))  # 2% validation; never swallows tiny debug sets
-    val_idx = torch.from_numpy(perm[:n_val])
-    trn_idx = torch.from_numpy(perm[n_val:])
+    val_idx = torch.from_numpy(perm[n - n_val:])
+    trn_idx = torch.from_numpy(perm[: n - n_val])
     if trn_idx.numel() < args.batch:
         raise SystemExit(f"training split ({trn_idx.numel()}) < --batch {args.batch}; lower --batch or add data")
     dev = torch.device(device)
