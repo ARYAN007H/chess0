@@ -27,7 +27,7 @@ on:
 
 jobs:
   label:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
     timeout-minutes: 350
     strategy:
       fail-fast: false
@@ -83,7 +83,7 @@ jobs:
 
   merge:
     needs: label
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
