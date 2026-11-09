@@ -157,7 +157,7 @@ def worker(wid, fen_slice, rec_slice, sf_path, depth, out_path, every, progress,
             try:
                 cp = engine.label(fen)
             except EngineDied as e:
-                print(f"[w{wid}] engine died: {e}", flush=True)
+                print(f"[w{wid}] engine died at record {idx}: {e}", flush=True)
                 try:
                     if engine is not None:
                         engine.quit()
@@ -165,10 +165,22 @@ def worker(wid, fen_slice, rec_slice, sf_path, depth, out_path, every, progress,
                     pass
                 engine = None
                 fails += 1
-                if fails >= 20:
-                    print(f"[w{wid}] {fails} consecutive deaths — abandoning slice", flush=True)
-                    break
-                continue  # retry this position with a fresh engine
+                if fails >= 2:
+                    # two fresh engines died on this record: a deterministic
+                    # poison position (kills SF mid-search on current CPU fleets,
+                    # 2026-11-09 investigation — silent SIGILL during NNUE eval,
+                    # ISA-independent, position-deterministic). Skip the record
+                    # (carried over UNCHANGED with its original depth-6 label);
+                    # the old abandon-at-20 logic turned small poison clusters
+                    # into total slice failure (runs 42500963402, 42699040490,
+                    # 42703527040, 42709275808 all produced ~300 labels/shard).
+                    skipped += 1
+                    k += 1
+                    fails = 0
+                    if skipped * 4 > total:
+                        print(f"[w{wid}] >25% of slice poisoned — abandoning", flush=True)
+                        break
+                continue  # first death: retry once with a fresh engine (transient rate ~0.5%)
             fails = 0
             k += 1
             labeled += 1
