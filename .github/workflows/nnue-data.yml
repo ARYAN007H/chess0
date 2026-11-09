@@ -1,6 +1,6 @@
 name: NNUE Data Factory
 
-# Generates NNUE training data: 8 parallel VMs play self-play games with the
+# Generates NNUE training data: 20 parallel VMs play self-play games with the
 # tuned champion and label quiet positions with depth-6 search scores. The
 # merge job concatenates the shards and uploads one binary artifact — that
 # artifact is what you download and upload to Kaggle for training.
@@ -27,7 +27,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2, 3, 4, 5, 6, 7, 8]
+        shard: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20]
     runs-on: ubuntu-latest
     timeout-minutes: 350
     steps:
@@ -49,7 +49,7 @@ jobs:
       - name: Generate labeled positions
         run: |
           npx tsx scripts/gen-nnue-data.ts \
-            --games $(( ${{ github.event.inputs.games || '12000' }} / 8 )) \
+            --games $(( ${{ github.event.inputs.games || '12000' }} / 20 )) \
             --depth ${{ github.event.inputs.depth || '6' }} \
             --seed ${{ github.run_id }}0${{ matrix.shard }} \
             --params data/params-current.json \
