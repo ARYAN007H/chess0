@@ -1,0 +1,134 @@
+name: SF Label Debug
+
+# One-off diagnostic: run the SF labeler on a tiny slice with stderr VISIBLE.
+# The production workflow sets stderr=DEVNULL in sf_label.py's Popen, so the
+# real reason engines die on the CI fleet is invisible in run 42500963402 /
+# 42699040490 / 42703527040. This prints it.
+
+on:
+  workflow_dispatch:
+    inputs:
+      run-id:
+        description: 'GH run id of the NDD1 artifact (nnue-data-v1-<run-id>)'
+        required: true
+        type: string
+      depth:
+        default: '12'
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  debug:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download NDD1 corpus artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: nnue-data-v1-${{ inputs.run-id }}
+          run-id: ${{ inputs.run-id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          path: corpus/
+
+      - name: Install Stockfish (17.1 avx2)
+        run: |
+          curl -sL -o /tmp/sf.tar https://github.com/official-stockfish/Stockfish/releases/download/sf_17.1/stockfish-ubuntu-x86-64-avx2.tar
+          mkdir -p /tmp/sfx && tar xf /tmp/sf.tar -C /tmp/sfx
+          SF=$(find /tmp/sfx -name 'stockfish*' -type f -perm -u+x | head -1)
+          echo "SF=$SF" >> "$GITHUB_ENV"
+          # CPU feature inventory for the SIGILL theory
+          grep -o 'avx2\|avx512f\|avx512dq\|avx512_vnni\|sse4_2' /proc/cpuinfo | sort -u | tr '\n' ' ' ; echo
+
+      - name: Convert corpus to FEN list
+        run: python training/nnue_to_fen.py --in corpus/nnue-data-v1.bin --out fens.txt
+
+      - name: Label 300 records with stderr visible
+        run: |
+          python3 - << 'EOF'
+          import importlib.util, sys
+          spec = importlib.util.spec_from_file_location("sl", "training/sf_label.py")
+          sl = importlib.util.module_from_spec(spec)
+          spec.loader.exec_module(sl)
+          # patch: stderr VISIBLE
+          orig_init = sl.Stockfish.__init__
+          def init(self, sf_path, depth, hash_mb=64, movetime=0, no_nnue=False):
+              import subprocess
+              self.depth = depth
+              self.movetime = movetime
+              self.recent = []
+              self.proc = subprocess.Popen([sf_path], stdin=subprocess.PIPE,
+                                           stdout=subprocess.PIPE, stderr=None,
+                                           text=True, bufsize=1)
+              self._send("uci")
+              while self._recv() != "uciok":
+                  pass
+              self._send("setoption name Threads value 1")
+              self._send(f"setoption name Hash value {hash_mb}")
+              self._send("isready")
+              while self._recv() != "readyok":
+                  pass
+          sl.Stockfish.__init__ = init
+          raw, count = sl.read_ndd1("corpus/nnue-data-v1.bin")
+          fens = [l.strip() for l in open("fens.txt")]
+          eng = sl.Stockfish(__import__('os').environ['SF'], depth=${{ inputs.depth }}, hash_mb=64, movetime=60)
+          labeled = died = 0
+          for i in range(300):
+              fen = fens[i]
+              try:
+                  cp = eng.label(fen)
+                  labeled += 1
+                  if i < 5:
+                      print(f"pos {i}: cp {cp} fen {fen[:60]}")
+              except sl.EngineDied as e:
+                  died += 1
+                  print(f"=== DEATH at pos {i} fen {fen}", flush=True)
+                  print(f"    {e}", flush=True)
+                  # respawn
+                  eng = sl.Stockfish(__import__('os').environ['SF'], depth=${{ inputs.depth }}, hash_mb=64, movetime=60)
+          print(f"RESULT: labeled {labeled}/300, died {died}")
+          eng.quit()
+          EOF
+
+      - name: Same 300 records with SSE2 build
+        run: |
+          curl -sL -o /tmp/sf2.tar https://github.com/official-stockfish/Stockfish/releases/download/sf_17.1/stockfish-ubuntu-x86-64.tar
+          mkdir -p /tmp/sfx2 && tar xf /tmp/sf2.tar -C /tmp/sfx2
+          SF2=$(find /tmp/sfx2 -name 'stockfish*' -type f -perm -u+x | head -1)
+          python3 - << 'EOF'
+          import importlib.util, os, subprocess
+          spec = importlib.util.spec_from_file_location("sl", "training/sf_label.py")
+          sl = importlib.util.module_from_spec(spec)
+          spec.loader.exec_module(sl)
+          def init(self, sf_path, depth, hash_mb=64, movetime=0, no_nnue=False):
+              self.depth = depth
+              self.movetime = movetime
+              self.recent = []
+              self.proc = subprocess.Popen([sf_path], stdin=subprocess.PIPE,
+                                           stdout=subprocess.PIPE, stderr=None,
+                                           text=True, bufsize=1)
+              self._send("uci")
+              while self._recv() != "uciok":
+                  pass
+              self._send("setoption name Threads value 1")
+              self._send(f"setoption name Hash value {hash_mb}")
+              self._send("isready")
+              while self._recv() != "readyok":
+                  pass
+          sl.Stockfish.__init__ = init
+          fens = [l.strip() for l in open("fens.txt")]
+          eng = sl.Stockfish(os.environ.get('SF2'), depth=${{ inputs.depth }}, hash_mb=64, movetime=60)
+          labeled = died = 0
+          for i in range(300):
+              try:
+                  eng.label(fens[i]); labeled += 1
+              except sl.EngineDied:
+                  died += 1
+                  print(f"=== SSE2 DEATH at pos {i}: {fens[i][:70]}", flush=True)
+                  eng = sl.Stockfish(os.environ.get('SF2'), depth=${{ inputs.depth }}, hash_mb=64, movetime=60)
+          print(f"SSE2 RESULT: labeled {labeled}/300, died {died}")
+          eng.quit()
+          EOF
