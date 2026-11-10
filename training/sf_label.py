@@ -157,7 +157,14 @@ def worker(wid, fen_slice, rec_slice, sf_path, depth, out_path, every, progress,
             try:
                 cp = engine.label(fen)
             except EngineDied as e:
-                print(f"[w{wid}] engine died at record {idx}: {e}", flush=True)
+                # quiet log: full reason only for the first death of a streak,
+                # then one summary line per 50 skips — a dense poison region
+                # otherwise buries the run log in respawn spam (looked broken
+                # to a human watching; the worker was fine)
+                if fails == 0:
+                    print(f"[w{wid}] engine died at record {idx}: {e}", flush=True)
+                elif fails % 50 == 0:
+                    print(f"[w{wid}] ... {fails} deaths so far (record {idx})", flush=True)
                 try:
                     if engine is not None:
                         engine.quit()
