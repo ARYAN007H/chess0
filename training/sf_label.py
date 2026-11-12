@@ -157,14 +157,7 @@ def worker(wid, fen_slice, rec_slice, sf_path, depth, out_path, every, progress,
             try:
                 cp = engine.label(fen)
             except EngineDied as e:
-                # quiet log: full reason only for the first death of a streak,
-                # then one summary line per 50 skips — a dense poison region
-                # otherwise buries the run log in respawn spam (looked broken
-                # to a human watching; the worker was fine)
-                if fails == 0:
-                    print(f"[w{wid}] engine died at record {idx}: {e}", flush=True)
-                elif fails % 50 == 0:
-                    print(f"[w{wid}] ... {fails} deaths so far (record {idx})", flush=True)
+                print(f"[w{wid}] engine died at record {idx}: {e}", flush=True)
                 try:
                     if engine is not None:
                         engine.quit()
@@ -279,7 +272,12 @@ def _merge(args, raw, count, n_fens):
     """Merge part files into the output NDD1: replace bytes 33-34 of each
     labeled record; unlabeled records keep their original label bytes."""
     labels = {}
-    for p in glob.glob(args.out + ".part*"):
+    # part files are named <label-out>.part<shard*100+worker> (e.g.
+    # labels.part702); the workflow's merge step copies them into CWD, where
+    # the old glob (args.out + ".part*") matched nothing and silently wrote
+    # an all-carried-over output ("0 SF labels" — the 4.1M corpus only ever
+    # worked because its parts were merged manually). Glob any *.part*.
+    for p in glob.glob("*.part*"):
         for line in open(p):
             idx_s, cp_s = line.split()
             labels[int(idx_s)] = int(cp_s)
