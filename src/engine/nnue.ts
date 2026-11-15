@@ -62,6 +62,12 @@ interface NnueNet {
   act: 'crelu' | 'screlu';
   qa: number;
   w1: Int16Array; // 2 * h1 * 768 (view-major)
+  w1w: Int32Array; // w1 pre-widened to i32 — accDelta's hot loop becomes a
+  // pure Int32Array += Int32Array elementwise add: strictly less work per
+  // element (no multiply, no i16 sign-extending load). Direction-positive
+  // for search NPS but not quantified on this dev box (load variance swamps
+  // it) — measure with a fixed-depth NNUE search harness before citing a
+  // number. 393KB at h1=64, built once per load.
   b1: Int16Array; // 2 * h1
   w2: Int8Array; // (2 * h1) * h2 (in-major)
   w3: Int8Array; // h2
@@ -129,7 +135,9 @@ export function loadNnueWeights(bytes: Uint8Array): string {
   for (let i = 0; i < w2Len; i++, off += 1) w2[i] = dv.getInt8(off);
   const w3 = new Int8Array(h2);
   for (let i = 0; i < h2; i++, off += 1) w3[i] = dv.getInt8(off);
-  net = { h1, h2, act, qa, w1, b1, w2, w3 };
+  const w1w = new Int32Array(w1Len);
+  w1w.set(w1);
+  net = { h1, h2, act, qa, w1, w1w, b1, w2, w3 };
   l2 = new Float64Array(h2);
   loadStamp++;
   // WASM SIMD path (layer 2/3): init + write transposed weights. Returns
@@ -230,7 +238,7 @@ function accDelta(into: Int32Array, slot: number, n: NnueNet, piece: number, sq:
   // white view keeps white-oriented squares; black view flips vertically.
   const fW = (isWhite ? type : type + 6) * 64 + s64;
   const fB = (isWhite ? type + 6 : type) * 64 + (s64 ^ 56);
-  const w1 = n.w1;
+  const w1 = n.w1w; // pre-widened i32: pure i32 += i32 loops vectorize in V8
   // w1 layout [view][feature][row], view stride 768*h1 — rows are contiguous.
   const r0W = fW * h1;
   const r0B = fB * h1;
@@ -241,11 +249,20 @@ function accDelta(into: Int32Array, slot: number, n: NnueNet, piece: number, sq:
   const b1 = base + h1;
   const b2 = base + 2 * h1;
   const b3 = base + 3 * h1;
-  for (let i = 0; i < h1; i++) {
-    into[b0 + i] += sign * w1[r0W + i];
-    into[b1 + i] += sign * w1[r0B + i];
-    into[b2 + i] += sign * w1[r1W + i];
-    into[b3 + i] += sign * w1[r1B + i];
+  if (sign > 0) {
+    for (let i = 0; i < h1; i++) {
+      into[b0 + i] += w1[r0W + i];
+      into[b1 + i] += w1[r0B + i];
+      into[b2 + i] += w1[r1W + i];
+      into[b3 + i] += w1[r1B + i];
+    }
+  } else {
+    for (let i = 0; i < h1; i++) {
+      into[b0 + i] -= w1[r0W + i];
+      into[b1 + i] -= w1[r0B + i];
+      into[b2 + i] -= w1[r1W + i];
+      into[b3 + i] -= w1[r1B + i];
+    }
   }
 }
 
