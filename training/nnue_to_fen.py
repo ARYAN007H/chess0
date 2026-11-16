@@ -44,11 +44,18 @@ CASTLE_HOME = {  # (kingSq, rookSq, flag) for each right, in 0..63 WHITE view
 
 
 def decode_record(rec: bytes):
-    """→ (stm, [64 codes], result) or None on a spec violation."""
+    """→ (stm, [64 codes], result) or None on a spec violation.
+
+    board holds the RAW NIBBLE CODES (0 = white PAWN, 15 = empty) — an
+    earlier version initialized board to 0 and wrote only non-empty codes,
+    so empty squares and white pawns were indistinguishable downstream and
+    every FEN this module produced was missing ALL of white's pawns (SF then
+    evaluated pawnless positions; the POV audit caught the corrupted labels
+    before any training run — 2026-11-16 investigation)."""
     stm = rec[0]
     if stm > 1:
         return None
-    board = [0] * 64
+    board = [15] * 64
     for byte_i in range(32):
         b = rec[1 + byte_i]
         for half in range(2):
@@ -68,7 +75,7 @@ def codes_to_fen(board, stm):
         empty = 0
         for file in range(8):
             code = board[rank * 8 + file]
-            if code == 0:
+            if code == 15:
                 empty += 1
             else:
                 if empty:
